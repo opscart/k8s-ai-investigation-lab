@@ -50,7 +50,7 @@ def run(
     payload = incident.model_dump()
     if repository:
         payload["repository_inventory"] = repository.inventory()
-    message = json.dumps(payload)
+    message = "Return the investigation result as JSON.\n" + json.dumps(payload)
     consumed_chars = len(instructions()) + len(message)
     inputs = [{"role": "user", "content": message}]
     stats = {"model_calls": 0, "tool_calls": 0, "input_tokens": 0, "output_tokens": 0}
