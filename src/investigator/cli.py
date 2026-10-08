@@ -10,6 +10,7 @@ from pathlib import Path
 from pydantic import ValidationError
 
 from .contracts import Evidence, Incident, RepositoryPolicy
+from .diagnostics import failure_details
 from .report import markdown
 from .repository import Repository
 from .runner import run
@@ -61,6 +62,11 @@ def parser():
     root.add_argument("--logs", type=Path, help="Optional edited log excerpt, at most 12,000 bytes")
     root.add_argument("--approve", help="Exact SHA-256 approval shown by preview")
     root.add_argument("--output", type=Path, default=Path(".local/results"))
+    root.add_argument(
+        "--debug",
+        action="store_true",
+        help="Print provider error details; these may echo submitted content. Use with synthetic data.",
+    )
     return root
 
 
@@ -95,10 +101,14 @@ def main(argv=None) -> int:
             with provider:
                 result = run(provider, incident, repository)
                 result["model"] = provider.model
-        except Exception:
+        except Exception as exc:
+            print(
+                json.dumps(failure_details(exc, provider.stage, args.debug), indent=2),
+                file=sys.stderr,
+            )
             raise ValueError(
                 "Foundry investigation failed. Check project access, deployment support and service "
-                "status. No automatic retry was made; provider error bodies are not printed."
+                "status. No automatic retry was made. Use --debug with synthetic data for provider details."
             ) from None
         finally:
             for warning in provider.cleanup_warnings:

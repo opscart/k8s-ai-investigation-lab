@@ -38,6 +38,7 @@ def test_agent_reference_pins_version_and_has_request_timeout():
     args = provider.client.responses.create.call_args.kwargs
     assert args["extra_body"]["agent_reference"]["version"] == "1"
     assert args["timeout"] == 12
+    assert "text" not in args
     assert "model" not in args
 
 
@@ -45,6 +46,7 @@ def test_baseline_has_no_agent_or_tools():
     provider = adapter(None)
     provider.respond([], 100)
     args = provider.client.responses.create.call_args.kwargs
+    assert args["text"] == {"format": {"type": "json_object"}}
     assert args["model"] == "deployment"
     assert "extra_body" not in args
     assert "tools" not in args
@@ -61,3 +63,12 @@ def test_bad_endpoint_rejected_without_auth(monkeypatch):
     monkeypatch.setenv("AZURE_AI_PROJECT_ENDPOINT", "https://example.org/api/projects/a")
     with pytest.raises(ValueError, match="endpoint"):
         Foundry(False)
+
+
+def test_agent_creation_owns_json_format():
+    provider = adapter(None)
+    provider.agent_mode = True
+    provider.project = Mock()
+    provider.__enter__()
+    definition = provider.project.agents.create_version.call_args.kwargs["definition"]
+    assert definition.as_dict()["text"] == {"format": {"type": "json_object"}}

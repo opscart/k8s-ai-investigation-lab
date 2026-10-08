@@ -42,3 +42,38 @@ def test_validation_does_not_echo_sensitive_input(tmp_path, incident, capsys):
     assert main(argv) == 1
     captured = capsys.readouterr()
     assert "NEVER-PRINT-THIS" not in captured.out + captured.err
+
+
+def test_provider_failure_reports_stage_and_opt_in_details(tmp_path, incident, capsys, monkeypatch):
+    from investigator import foundry
+
+    class FailingProvider:
+        stage = "agent_creation"
+        cleanup_warnings = []
+
+        def __init__(self, agent_mode):
+            pass
+
+        def __enter__(self):
+            exc = RuntimeError("DO-NOT-ECHO-EXCEPTION")
+            exc.status_code = 400
+            exc.body = {"error": {"message": "SYNTHETIC-DETAIL", "param": "tools"}}
+            raise exc
+
+        def __exit__(self, *_):
+            pass
+
+    monkeypatch.setattr(foundry, "Foundry", FailingProvider)
+    argv = args_for(tmp_path, incident)
+    argv[0] = "run"
+    digest = prepare(parser().parse_args(argv))[-1]
+    argv += ["--approve", digest, "--output", str(tmp_path / "results")]
+    assert main(argv) == 1
+    output = capsys.readouterr().err
+    assert '"stage": "agent_creation"' in output
+    assert '"http_status": 400' in output
+    assert "SYNTHETIC-DETAIL" not in output
+    assert main(argv + ["--debug"]) == 1
+    output = capsys.readouterr().err
+    assert "SYNTHETIC-DETAIL" in output
+    assert "DO-NOT-ECHO-EXCEPTION" not in output

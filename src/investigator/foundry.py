@@ -32,6 +32,7 @@ class Foundry:
             )
         if not self.model:
             raise ValueError("Set AZURE_AI_MODEL_DEPLOYMENT_NAME to your actual deployment name")
+        self.stage = "client_setup"
         self.agent_mode = agent_mode
         self.agent = None
         self.conversation = None
@@ -49,15 +50,19 @@ class Foundry:
     def __enter__(self):
         try:
             if self.agent_mode:
+                self.stage = "agent_creation"
                 self.agent = self.project.agents.create_version(
                     agent_name="investigation-lab-" + uuid.uuid4().hex[:12],
                     definition=PromptAgentDefinition(
                         model=self.model,
                         instructions=instructions(),
+                        text={"format": {"type": "json_object"}},
                         tools=[FunctionTool(**definition) for definition in TOOLS],
                     ),
                 )
+            self.stage = "conversation_creation"
             self.conversation = self.client.conversations.create()
+            self.stage = "investigation"
             return self
         except Exception:
             self.close()
@@ -68,7 +73,6 @@ class Foundry:
             "input": inputs,
             "conversation": self.conversation.id,
             "max_output_tokens": 3500,
-            "text": {"format": {"type": "json_object"}},
             "timeout": min(45.0, remaining_seconds),
         }
         if self.agent:
@@ -80,8 +84,14 @@ class Foundry:
                 }
             }
         else:
-            args.update(model=self.model, instructions=instructions())
+            args.update(
+                model=self.model,
+                instructions=instructions(),
+                text={"format": {"type": "json_object"}},
+            )
+        self.stage = "model_request"
         response = self.client.responses.create(**args)
+        self.stage = "response_validation"
         if response.status != "completed":
             raise ValueError("Provider did not complete the response")
         calls = [
@@ -90,6 +100,7 @@ class Foundry:
             if item.type == "function_call"
         ]
         usage = response.usage
+        self.stage = "tool_execution_or_result_validation"
         return Turn(
             text=response.output_text,
             calls=calls,
