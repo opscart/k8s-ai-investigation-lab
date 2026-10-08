@@ -1,0 +1,9 @@
+{
+  "repository_id": "opscart/k8s-ai-investigation-lab",
+  "allowed_files": [
+    "examples/demo-app/app.py",
+    "examples/demo-app/deployment.yaml",
+    "examples/demo-app/Dockerfile",
+    "examples/demo-app/runbook.md"
+  ]
+}

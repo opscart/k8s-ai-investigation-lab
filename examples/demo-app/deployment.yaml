@@ -1,0 +1,40 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: inventory-demo
+  namespace: investigation-lab
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: inventory-demo
+  template:
+    metadata:
+      labels:
+        app: inventory-demo
+    spec:
+      containers:
+        - name: app
+          image: investigation-demo:local
+          imagePullPolicy: Never
+          ports:
+            - containerPort: 8080
+          resources:
+            requests:
+              cpu: 25m
+              memory: 32Mi
+            limits:
+              cpu: 100m
+              memory: 64Mi
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: 8080
+            periodSeconds: 5

@@ -1,0 +1,10 @@
+{
+  "case_id": "probe-001",
+  "workload": "investigation-lab/Deployment/inventory-demo",
+  "question": "Why is this container restarting? Identify a supported correction with evidence references. This is a synthetic captured incident. The supplied repository commit represents the source and manifest deployed for this fixture.",
+  "evidence": [
+    {"id": "pod_state", "source": "synthetic pod snapshot", "text": "Container app is waiting in CrashLoopBackOff. restartCount=5. Last termination reason=Error, exitCode=137. Image investigation-demo:local. No OOMKilled reason is recorded."},
+    {"id": "pod_events", "source": "synthetic events from the same restart window", "text": "Unhealthy: Liveness probe failed: HTTP probe failed with statuscode: 404. Killing: Container app failed liveness probe, will be restarted."},
+    {"id": "approved_logs", "source": "synthetic reviewed previous-container logs", "text": "Application listening on port 8080\nGET /health HTTP/1.1 404\nGET /healthz HTTP/1.1 200"}
+  ]
+}

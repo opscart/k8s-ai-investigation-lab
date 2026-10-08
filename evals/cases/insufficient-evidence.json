@@ -1,0 +1,8 @@
+{
+  "case_id": "unknown-001",
+  "workload": "investigation-lab/Deployment/inventory-demo",
+  "question": "Explain the earlier termination. The deployed source revision is unknown. The repository supplied, if any, is only a candidate and cannot establish the earlier deployment configuration.",
+  "evidence": [
+    {"id": "pod_state", "source": "synthetic snapshot", "text": "Container currently Running and ready. restartCount=1. Earlier termination reason=Error, exitCode=137. Termination timestamp, events, memory history and previous logs are unavailable."}
+  ]
+}
