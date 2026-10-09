@@ -1,0 +1,16 @@
+parameters:
+  - name: propertyName
+    type: string
+  - name: propertyValue
+    type: string
+  - name: sharedLibraryVersion
+    type: string
+
+stages:
+  - stage: CI
+    jobs:
+      - template: ../jobs/maven-test.yml
+        parameters:
+          propertyName: ${{ parameters.propertyName }}
+          propertyValue: ${{ parameters.propertyValue }}
+          sharedLibraryVersion: ${{ parameters.sharedLibraryVersion }}

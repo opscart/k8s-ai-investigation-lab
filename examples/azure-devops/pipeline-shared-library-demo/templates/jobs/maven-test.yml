@@ -1,0 +1,25 @@
+parameters:
+  - name: propertyName
+    type: string
+  - name: propertyValue
+    type: string
+  - name: sharedLibraryVersion
+    type: string
+
+jobs:
+  - job: MavenTest
+    pool:
+      vmImage: ubuntu-latest
+    steps:
+      - script: |
+          echo "Build.BuildId: $(Build.BuildId)"
+          echo "Build.SourceVersion: $(Build.SourceVersion)"
+          echo "Shared library version: $SHARED_LIBRARY_VERSION"
+        displayName: Print build provenance
+        env:
+          SHARED_LIBRARY_VERSION: ${{ parameters.sharedLibraryVersion }}
+      - script: mvn test "-D${PROPERTY_NAME}=${PROPERTY_VALUE}"
+        displayName: Run Maven tests
+        env:
+          PROPERTY_NAME: ${{ parameters.propertyName }}
+          PROPERTY_VALUE: ${{ parameters.propertyValue }}
