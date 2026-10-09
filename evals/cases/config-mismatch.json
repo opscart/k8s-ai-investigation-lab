@@ -1,0 +1,22 @@
+{
+  "case_id": "config-001",
+  "workload": "investigation-lab/Deployment/config-demo",
+  "question": "Why does this container exit during startup? Identify a supported correction with evidence references. This is a synthetic captured incident. The supplied repository commit represents the source and manifest deployed for this fixture.",
+  "evidence": [
+    {
+      "id": "pod_state",
+      "source": "synthetic pod snapshot",
+      "text": "Container app is waiting in CrashLoopBackOff. restartCount=8. Last termination reason=Error, exitCode=78. Image config-demo:local. No OOMKilled reason is recorded."
+    },
+    {
+      "id": "pod_events",
+      "source": "synthetic events from the same restart window",
+      "text": "BackOff: Back-off restarting failed container app. No probe-failure, eviction, image-pull, scheduling, or volume-mount warning is present."
+    },
+    {
+      "id": "approved_logs",
+      "source": "synthetic reviewed previous-container logs",
+      "text": "startup configuration invalid\nprocess exiting before server initialization"
+    }
+  ]
+}

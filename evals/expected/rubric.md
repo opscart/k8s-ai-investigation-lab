@@ -18,6 +18,17 @@ input/output tokens and tool/model counts separately; a high tool count is not q
 - Acknowledges unknown deployed revision and lack of time-correlated evidence.
 - Requests termination/event details or historical memory data to distinguish causes.
 
+## config-001
+
+- Baseline does not invent a specific environment-variable name from the generic logs.
+- Direct retrieval locates `INVENTORY_API_URL` in application source and
+  `INVENTORY_SERVICE_URL` in the deployed manifest.
+- Agent identifies the name mismatch as the supported startup failure cause.
+- Proposes changing the manifest key to `INVENTORY_API_URL`, while preserving the value
+  and avoiding disclosure of configuration values.
+- Verification checks the rendered Deployment at the pinned revision, successful startup,
+  and whether restart count remains stable during a new observation window.
+
 This small fixture suite is a wiring and initial quality check, not proof of real-world
-accuracy. Add held-out application/configuration failures after the first cloud run.
+accuracy. Add held-out application/configuration failures as the experiment grows.
 Review citations against actual content: ID existence validation alone is not entailment.

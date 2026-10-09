@@ -127,6 +127,13 @@ The easy probe case may be solvable without retrieval; a tie is a valid finding.
 Repeat runs before drawing conclusions. No benchmark win or real incident diagnosis
 is claimed by the included fixtures or offline tests.
 
+The configuration-mismatch case is designed to require repository context: its approved
+logs do not reveal the expected environment-variable name. Preview and run it in both
+modes, using `config/config-mismatch-policy.json` for agent mode and fresh output
+directories such as `.local/config-baseline` and `.local/config-agent`. Compare whether
+the baseline calibrates uncertainty and whether the agent cites both the application
+source and deployed manifest before proposing the exact correction.
+
 ## Output
 
 Reports contain assessment, likely cause, alternatives, proposed correction, verification,
