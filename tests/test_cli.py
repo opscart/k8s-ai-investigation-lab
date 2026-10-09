@@ -1,6 +1,6 @@
 import json
 
-from investigator.cli import main, parser, prepare
+from investigator.cli import add_cost_estimate, main, parser, prepare
 
 
 def args_for(tmp_path, incident):
@@ -77,3 +77,53 @@ def test_provider_failure_reports_stage_and_opt_in_details(tmp_path, incident, c
     output = capsys.readouterr().err
     assert "SYNTHETIC-DETAIL" in output
     assert "DO-NOT-ECHO-EXCEPTION" not in output
+
+
+def test_context_pack_preview_shows_only_bounded_pack(tmp_path, repo, incident, capsys):
+    case = tmp_path / "incident.json"
+    case.write_text(incident.model_dump_json())
+    policy = tmp_path / "policy.json"
+    policy.write_text(repo.policy.model_dump_json())
+    registry = tmp_path / "repositories.json"
+    registry.write_text(
+        json.dumps(
+            {
+                "service": "default/demo",
+                "repositories": [
+                    {
+                        "role": "application",
+                        "root": ".",
+                        "commit": repo.commit,
+                        "policy": "policy.json",
+                    }
+                ],
+                "context_max_chars": 2000,
+                "context_max_items": 1,
+            }
+        )
+    )
+    assert (
+        main(
+            [
+                "preview",
+                "--mode",
+                "context-pack",
+                "--case",
+                str(case),
+                "--repository-set",
+                str(registry),
+            ]
+        )
+        == 0
+    )
+    output = capsys.readouterr().out
+    assert "EXACT BOUNDED REPOSITORY CONTEXT TO BE SENT" in output
+    assert "HEALTH_PATH" in output
+    assert "EVALUATION-ANSWER" not in output
+
+
+def test_cost_estimate_is_explicit_and_deterministic():
+    stats = {"input_tokens": 1000, "output_tokens": 500}
+    add_cost_estimate(stats, 2.0, 8.0)
+    assert stats["estimated_cost_usd"] == 0.006
+    assert stats["input_price_per_million_usd"] == 2.0

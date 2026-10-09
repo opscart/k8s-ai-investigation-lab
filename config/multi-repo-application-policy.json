@@ -1,0 +1,4 @@
+{
+  "repository_id": "fixture/checkout-application",
+  "allowed_files": ["examples/multi-repo/application/service.py"]
+}

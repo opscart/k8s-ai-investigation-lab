@@ -42,6 +42,20 @@ class RepositoryPolicy(StrictModel):
     allowed_files: list[str] = Field(min_length=1, max_length=100)
 
 
+class RepositorySource(StrictModel):
+    role: str = Field(min_length=1, max_length=40, pattern=r"^[a-z][a-z0-9_-]*$")
+    root: str = Field(min_length=1, max_length=1000)
+    commit: str = Field(pattern=r"^[0-9a-f]{40}([0-9a-f]{24})?$")
+    policy: str = Field(min_length=1, max_length=1000)
+
+
+class RepositorySetConfig(StrictModel):
+    service: str = Field(min_length=1, max_length=200)
+    repositories: list[RepositorySource] = Field(min_length=1, max_length=3)
+    context_max_chars: int = Field(default=20000, ge=2000, le=50000)
+    context_max_items: int = Field(default=12, ge=1, le=30)
+
+
 class Limits(StrictModel):
     model_calls: int = Field(default=6, ge=1, le=10)
     tool_calls: int = Field(default=12, ge=0, le=30)

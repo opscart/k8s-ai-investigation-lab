@@ -1,0 +1,4 @@
+{
+  "repository_id": "fixture/checkout-deployment",
+  "allowed_files": ["examples/multi-repo/deployment/values.yaml"]
+}

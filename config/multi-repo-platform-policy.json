@@ -1,0 +1,4 @@
+{
+  "repository_id": "fixture/shared-platform",
+  "allowed_files": ["examples/multi-repo/platform/deployment-template.yaml"]
+}

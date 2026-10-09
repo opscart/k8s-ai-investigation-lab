@@ -10,9 +10,9 @@ retrieval gap. Integrate the useful approach with OpsCart afterward.
 
 Initial runnable foundation, **not a proven diagnosis product**. Includes:
 
-- A standalone CLI and two comparable modes: baseline and Foundry prompt agent.
+- A standalone CLI with baseline, bounded context-pack, and Foundry prompt-agent modes.
 - Captured incident evidence and optional operator-reviewed log excerpts.
-- Read-only search/file tools restricted to explicitly allowed files at one Git commit.
+- Up to three repository roles, each pinned to an immutable commit and explicit allowlist.
 - JSON/Markdown reports with evidence references, usage and call counts.
 - Synthetic probe-mismatch and insufficient-evidence cases with a human scoring rubric.
 - Offline tests for tool boundaries, approval, provider wiring and result validation.
@@ -134,6 +134,52 @@ directories such as `.local/config-baseline` and `.local/config-agent`. Compare 
 the baseline calibrates uncertainty and whether the agent cites both the application
 source and deployed manifest before proposing the exact correction.
 
+## 7. Compare bounded multi-repository context
+
+Generate an ignored registry for the portable three-role fixture after committing or
+pulling its files. A real registry may point each role at a different local clone and
+immutable commit; repository contents are never fetched remotely by the model.
+
+```bash
+python scripts/create_fixture_repository_set.py --revision HEAD \
+  --output .local/multi-repo-set.json
+
+investigate preview --mode context-pack \
+  --case evals/cases/multi-repo-config.json \
+  --repository-set .local/multi-repo-set.json \
+  --input-price-per-million YOUR_INPUT_PRICE \
+  --output-price-per-million YOUR_OUTPUT_PRICE
+```
+
+The preview prints the exact ranked, bounded chunks that one model call will receive.
+Run it with the displayed fingerprint and a fresh output directory, then repeat in
+`agent` mode with the same registry. Agent mode exposes read-only search/file tools and
+may make multiple calls; it does not preload every allowed file into the request.
+
+```bash
+investigate run --mode context-pack \
+  --case evals/cases/multi-repo-config.json \
+  --repository-set .local/multi-repo-set.json \
+  --input-price-per-million YOUR_INPUT_PRICE \
+  --output-price-per-million YOUR_OUTPUT_PRICE \
+  --approve PASTE_CONTEXT_PACK_FINGERPRINT --output .local/multi-context
+
+investigate preview --mode agent \
+  --case evals/cases/multi-repo-config.json \
+  --repository-set .local/multi-repo-set.json
+```
+
+Prices are operator-supplied USD per million tokens because Azure price, region, model,
+and agreement can change. They affect the approval fingerprint and report only; the lab
+does not claim that its estimate replaces Azure billing data. Compare all three modes:
+
+```bash
+python scripts/compare_results.py \
+  .local/multi-baseline/*.json \
+  .local/multi-context/*.json \
+  .local/multi-agent/*.json
+```
+
 ## Output
 
 Reports contain assessment, likely cause, alternatives, proposed correction, verification,
@@ -144,13 +190,15 @@ quoted by the model; keep real reports private in the ignored `.local/` director
 
 ## Bounds and limitations
 
-- 6 model calls and 12 tool calls maximum per investigation; no automatic retries.
+- Context-pack uses one model call and no tools. Agent allows at most 6 model calls and
+  12 tool calls; no mode automatically retries.
 - 120-second loop budget, checked between calls; individual requests capped at 45 seconds.
   SDK timeouts are network-operation timeouts, not hard process deadlines. Agent setup
   and cleanup are outside the investigation timer. Token acquisition has its own timeout.
 - 3,500 output tokens per model call; 60,000-character input/evidence budget. This is
   not a guaranteed tokenizer-level total-context limit; provider history/reasoning adds overhead.
-- Up to 100 explicit allowed files, 64 KiB each; regular UTF-8 Git blobs only.
+- One to three repositories, each with up to 100 explicit allowed files of 64 KiB each;
+  regular UTF-8 Git blobs only. Context packs default to 20,000 characters / 12 chunks.
 - At most 8 search hits; file reads at most 120 lines / 10,000 characters.
 - No shell tool, cluster writes, automatic changes, indexing or background polling.
 - Local approval is a CLI consent mechanism, not multi-user authorization.

@@ -29,6 +29,17 @@ input/output tokens and tool/model counts separately; a high tool count is not q
 - Verification checks the rendered Deployment at the pinned revision, successful startup,
   and whether restart count remains stable during a new observation window.
 
+## multi-repo-config-001
+
+- Baseline does not invent a specific configuration name from generic startup logs.
+- Repository-backed modes connect `BILLING_API_URL` in application source with
+  `BILLING_SERVICE_URL` in deployment values and the shared template's environment mapping.
+- The correction changes the deployment value's environment-variable name to
+  `BILLING_API_URL`; it does not claim that the shared template itself is defective.
+- Citations distinguish the application, deployment, and platform repository roles.
+- Compare context-pack's single call with agent tool traversal for correctness, retrieved
+  characters, input/output tokens, duration, and operator-supplied estimated cost.
+
 This small fixture suite is a wiring and initial quality check, not proof of real-world
 accuracy. Add held-out application/configuration failures as the experiment grows.
 Review citations against actual content: ID existence validation alone is not entailment.

@@ -2,7 +2,7 @@ import json
 
 import pytest
 
-from investigator.contracts import Limits
+from investigator.contracts import Evidence, Limits
 from investigator.runner import ToolCall, Turn, run
 
 
@@ -38,6 +38,40 @@ def test_baseline_no_repository_content(incident):
     assert "repository_inventory" not in provider.requests[0][0]["content"]
     assert result["stats"]["tool_calls"] == 0
     assert result["stats"]["input_tokens"] == 10
+    assert result["stats"]["retrieved_chars"] == 0
+
+
+def test_context_pack_is_one_call_without_tools(repo, incident):
+    context = Evidence(
+        id="repo_context",
+        source=f"fixture@{repo.commit}:app.py:L1-L2",
+        text='1: HEALTH_PATH = "/healthz"',
+    )
+    provider = Fake([Turn(text=answer(["repo_context"]), input_tokens=20, output_tokens=10)])
+    result = run(
+        provider,
+        incident,
+        repo,
+        mode="context-pack",
+        prefetched_evidence=[context],
+    )
+    assert result["mode"] == "context-pack"
+    assert result["stats"]["model_calls"] == 1
+    assert result["stats"]["tool_calls"] == 0
+    assert result["stats"]["retrieved_items"] == 1
+    assert result["stats"]["retrieved_chars"] == len(context.text)
+    assert "HEALTH_PATH" in provider.requests[0][0]["content"]
+
+
+def test_context_pack_cannot_call_tools(repo, incident):
+    with pytest.raises(ValueError, match="Non-agent"):
+        run(
+            Fake([Turn(calls=[ToolCall("1", "search_repository", "{}")])]),
+            incident,
+            repo,
+            mode="context-pack",
+            prefetched_evidence=[Evidence(id="repo_x", source="fixture", text="safe")],
+        )
 
 
 def test_agent_tools_and_real_provenance(repo, incident):
@@ -63,7 +97,7 @@ def test_unknown_citation_rejected(incident):
 
 
 def test_baseline_cannot_call_tools(incident):
-    with pytest.raises(ValueError, match="Baseline"):
+    with pytest.raises(ValueError, match="Non-agent"):
         run(Fake([Turn(calls=[ToolCall("1", "search_repository", "{}")])]), incident, None)
 
 

@@ -6,8 +6,9 @@ from dataclasses import dataclass, field
 from importlib.resources import files
 from typing import Protocol
 
-from .contracts import Diagnosis, Incident, Limits, validate_citations
+from .contracts import Diagnosis, Evidence, Incident, Limits, validate_citations
 from .repository import Repository
+from .repository_set import RepositorySet
 
 
 @dataclass
@@ -37,23 +38,44 @@ def instructions() -> str:
 def run(
     provider: Provider,
     incident: Incident,
-    repository: Repository | None,
+    repository: Repository | RepositorySet | None,
     limits: Limits | None = None,
+    *,
+    mode: str | None = None,
+    prefetched_evidence: list[Evidence] | None = None,
 ) -> dict:
     limits = limits or Limits()
+    mode = mode or ("agent" if repository else "baseline")
+    if mode not in {"baseline", "context-pack", "agent"}:
+        raise ValueError("Unknown investigation mode")
+    if mode == "baseline" and repository is not None:
+        raise ValueError("Baseline mode cannot use repositories")
+    if mode in {"context-pack", "agent"} and repository is None:
+        raise ValueError("Repository-backed mode requires repositories")
+    prefetched_evidence = prefetched_evidence or []
+    if mode != "context-pack" and prefetched_evidence:
+        raise ValueError("Prefetched repository evidence requires context-pack mode")
     started = time.monotonic()
-    evidence = {item.id: item for item in incident.evidence}
-    if len(evidence) != len(incident.evidence):
+    evidence = {item.id: item for item in [*incident.evidence, *prefetched_evidence]}
+    if len(evidence) != len(incident.evidence) + len(prefetched_evidence):
         raise ValueError("Incident evidence IDs must be unique")
-    if any(key.startswith("repo_") for key in evidence):
+    if any(item.id.startswith("repo_") for item in incident.evidence):
         raise ValueError("repo_ evidence IDs are reserved for repository tools")
     payload = incident.model_dump()
+    payload["evidence"] = [item.model_dump() for item in evidence.values()]
     if repository:
         payload["repository_inventory"] = repository.inventory()
     message = "Return the investigation result as JSON.\n" + json.dumps(payload)
     consumed_chars = len(instructions()) + len(message)
     inputs = [{"role": "user", "content": message}]
-    stats = {"model_calls": 0, "tool_calls": 0, "input_tokens": 0, "output_tokens": 0}
+    stats = {
+        "model_calls": 0,
+        "tool_calls": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "retrieved_items": len(prefetched_evidence),
+        "retrieved_chars": sum(len(item.text) for item in prefetched_evidence),
+    }
     trajectory = []
     seen_calls = set()
     while stats["model_calls"] < limits.model_calls:
@@ -75,7 +97,7 @@ def run(
             return {
                 "schema_version": "1",
                 "case_id": incident.case_id,
-                "mode": "agent" if repository else "baseline",
+                "mode": mode,
                 "repository": repository.inventory() if repository else None,
                 "diagnosis": diagnosis.model_dump(),
                 "stats": stats,
@@ -83,8 +105,8 @@ def run(
                 # Report provenance, not a second local copy of raw evidence text.
                 "evidence_sources": {key: value.source for key, value in evidence.items()},
             }
-        if repository is None:
-            raise ValueError("Baseline provider attempted a tool call")
+        if mode != "agent" or repository is None:
+            raise ValueError("Non-agent provider attempted a tool call")
         inputs = []
         for call in turn.calls:
             if stats["tool_calls"] >= limits.tool_calls:
@@ -114,6 +136,8 @@ def run(
                 raise ValueError("Investigation context budget exhausted")
             consumed_chars += len(encoded) + len(call.arguments)
             evidence.update({item.id: item for item in items})
+            stats["retrieved_items"] += len(items)
+            stats["retrieved_chars"] += sum(len(item.text) for item in items)
             trajectory.append({"tool": call.name, "evidence_ids": [item.id for item in items]})
             inputs.append({"type": "function_call_output", "call_id": call.id, "output": encoded})
     raise ValueError("Investigation model-call budget exhausted")

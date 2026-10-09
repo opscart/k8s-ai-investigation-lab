@@ -1,0 +1,17 @@
+{
+  "case_id": "multi-repo-config-001",
+  "workload": "investigation-lab/Deployment/checkout-demo",
+  "question": "Why does this container fail before startup? Identify a correction supported across the application, deployment values, and shared platform template. The supplied pinned repositories represent the deployed inputs for this synthetic fixture.",
+  "evidence": [
+    {
+      "id": "pod_state",
+      "source": "synthetic pod snapshot",
+      "text": "Container app is waiting in CrashLoopBackOff. restartCount=11. Last termination reason=Error, exitCode=78. No OOMKilled reason is recorded."
+    },
+    {
+      "id": "approved_logs",
+      "source": "synthetic reviewed previous-container logs",
+      "text": "startup dependency configuration invalid\nprocess exited before listener initialization"
+    }
+  ]
+}

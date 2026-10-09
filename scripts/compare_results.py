@@ -7,22 +7,21 @@ from pathlib import Path
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("baseline", type=Path)
-    parser.add_argument("agent", type=Path)
+    parser.add_argument("results", type=Path, nargs="+")
     args = parser.parse_args()
-    base, agent = (json.loads(path.read_text()) for path in (args.baseline, args.agent))
-    if base["mode"] != "baseline" or agent["mode"] != "agent":
-        raise SystemExit("Expected baseline then agent result")
-    if (base["incident_fingerprint"], base["model"]) != (
-        agent["incident_fingerprint"],
-        agent["model"],
-    ):
+    if len(args.results) < 2:
+        raise SystemExit("Provide at least two saved results")
+    results = [json.loads(path.read_text()) for path in args.results]
+    identities = {(item["incident_fingerprint"], item["model"]) for item in results}
+    if len(identities) != 1:
         raise SystemExit("Comparison requires identical incident inputs and model deployment")
-    for result in (base, agent):
+    if len({item["mode"] for item in results}) != len(results):
+        raise SystemExit("Provide at most one result per mode")
+    for result in results:
         print(result["mode"], json.dumps(result["stats"]))
         print("Cause:", result["diagnosis"]["likely_cause"]["text"])
         print("Correction:", result["diagnosis"]["proposed_correction"])
-    print("Score both against evals/expected/rubric.md. No automatic correctness score is claimed.")
+    print("Score results against evals/expected/rubric.md. No automatic correctness score is claimed.")
 
 
 if __name__ == "__main__":

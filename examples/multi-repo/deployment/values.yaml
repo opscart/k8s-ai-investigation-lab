@@ -1,0 +1,4 @@
+service:
+  name: checkout-demo
+  dependencyEnvName: BILLING_SERVICE_URL
+  dependencyUrl: http://billing-api:8080
