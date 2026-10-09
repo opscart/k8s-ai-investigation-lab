@@ -180,6 +180,32 @@ python scripts/compare_results.py \
   .local/multi-agent/*.json
 ```
 
+## Azure DevOps cross-repository experiment
+
+The synthetic application repository in
+[examples/azure-devops/pipeline-app-demo](examples/azure-devops/pipeline-app-demo)
+references the synthetic shared pipeline library in
+[examples/azure-devops/pipeline-shared-library-demo](examples/azure-devops/pipeline-shared-library-demo).
+The first build is intentionally expected to fail: the application pipeline supplies a
+different JVM property name from the one required by the Java source. The Maven command
+lives in the shared job template.
+
+Compare a baseline investigation using only the generic build failure log with a
+repository-aware investigation that can read the application source, application
+pipeline, and shared templates. The baseline should express uncertainty; identifying
+the exact correction requires correlating those files. No corporate code or data is
+included in this fixture.
+
+From the application fixture directory, verify both outcomes locally:
+
+```bash
+mvn test -Dbilling.service.url=http://billing-api.invalid
+mvn test -Dbilling.api.url=http://billing-api.invalid
+```
+
+The first command should fail with `startup dependency configuration invalid`; the
+second should pass.
+
 ## Output
 
 Reports contain assessment, likely cause, alternatives, proposed correction, verification,

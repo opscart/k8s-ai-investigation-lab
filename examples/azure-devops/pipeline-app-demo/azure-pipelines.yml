@@ -1,0 +1,23 @@
+trigger:
+  branches:
+    include:
+      - main
+      - feature/*
+
+resources:
+  repositories:
+    - repository: shared
+      type: git
+      name: AI-DevOps-POC/pipeline-shared-library-demo
+      ref: refs/heads/main
+
+variables:
+  - name: SharedLibraryVersion
+    value: $[ resources.repositories.shared.version ]
+
+stages:
+  - template: templates/pipelines/ci-java-microservices.yml@shared
+    parameters:
+      propertyName: billing.service.url
+      propertyValue: http://billing-api.invalid
+      sharedLibraryVersion: $(SharedLibraryVersion)
