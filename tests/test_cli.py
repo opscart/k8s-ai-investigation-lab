@@ -1,5 +1,6 @@
 import json
 
+from investigator.azure_devops import capture_build
 from investigator.cli import add_cost_estimate, main, parser, prepare
 
 
@@ -127,3 +128,36 @@ def test_cost_estimate_is_explicit_and_deterministic():
     add_cost_estimate(stats, 2.0, 8.0)
     assert stats["estimated_cost_usd"] == 0.006
     assert stats["input_price_per_million_usd"] == 2.0
+
+
+def test_captured_azure_devops_pack_previews_without_retrieval(
+    tmp_path, capsys, ado_client, ado_policy
+):
+    capture_path = tmp_path / "build-679.json"
+    capture_path.write_text(capture_build(ado_client, ado_policy, 679).model_dump_json())
+    assert (
+        main(
+            [
+                "preview",
+                "--mode",
+                "context-pack",
+                "--capture",
+                str(capture_path),
+            ]
+        )
+        == 0
+    )
+    output = capsys.readouterr().out
+    assert "EXACT BOUNDED REPOSITORY CONTEXT TO BE SENT" in output
+    assert "billing.service.url" in output
+    assert "buildId=679" in output
+
+
+def test_capture_cannot_be_combined_with_case(tmp_path, incident, capsys, ado_client, ado_policy):
+    capture_path = tmp_path / "capture.json"
+    capture_path.write_text(capture_build(ado_client, ado_policy, 679).model_dump_json())
+    argv = args_for(tmp_path, incident)
+    argv[argv.index("baseline")] = "context-pack"
+    argv += ["--capture", str(capture_path)]
+    assert main(argv) == 1
+    assert "exactly one" in capsys.readouterr().err

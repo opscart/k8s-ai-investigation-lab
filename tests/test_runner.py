@@ -63,6 +63,23 @@ def test_context_pack_is_one_call_without_tools(repo, incident):
     assert "HEALTH_PATH" in provider.requests[0][0]["content"]
 
 
+def test_captured_context_pack_needs_no_local_repository(incident):
+    context = Evidence(id="repo_remote", source="Azure DevOps pinned commit", text="1: safe")
+    provider = Fake([Turn(text=answer(["repo_remote"]))])
+    inventory = {"service": "demo", "repositories": [{"commit": "a" * 40}]}
+    result = run(
+        provider,
+        incident,
+        None,
+        mode="context-pack",
+        prefetched_evidence=[context],
+        repository_inventory=inventory,
+    )
+    assert result["repository"] == inventory
+    assert result["stats"]["model_calls"] == 1
+    assert result["stats"]["tool_calls"] == 0
+
+
 def test_context_pack_cannot_call_tools(repo, incident):
     with pytest.raises(ValueError, match="Non-agent"):
         run(
@@ -89,6 +106,16 @@ def test_agent_tools_and_real_provenance(repo, incident):
     assert "healthz" in provider.requests[1][0]["output"]
     assert "EVALUATION-ANSWER" not in json.dumps(provider.requests)
     assert repo.commit in result["evidence_sources"][repo.read("app.py", 1, 2).id]
+
+
+@pytest.mark.parametrize("agent_mode", [False, True])
+def test_json_mode_instruction_in_input(repo, incident, agent_mode):
+    provider = Fake([Turn(text=answer())])
+    run(provider, incident, repo if agent_mode else None)
+    content = provider.requests[0][0]["content"]
+    instruction, payload = content.split("\n", 1)
+    assert instruction == "Return the investigation result as JSON."
+    assert json.loads(payload)["case_id"] == incident.case_id
 
 
 def test_unknown_citation_rejected(incident):
