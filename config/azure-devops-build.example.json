@@ -9,27 +9,20 @@
     {
       "role": "application",
       "repository": "pipeline-app-demo",
-      "commit_source": "build_source",
-      "allowed_files": [
-        "azure-pipelines.yml",
-        "pom.xml",
-        "src/main/java/com/opscart/lab/DependencyConfig.java",
-        "src/test/java/com/opscart/lab/DependencyConfigTest.java"
-      ]
+      "commit_source": "build_source"
     },
     {
       "role": "shared_library",
       "repository": "pipeline-shared-library-demo",
       "commit_source": "provenance_log",
-      "commit_label": "Shared library version",
-      "allowed_files": [
-        "templates/pipelines/ci-java-microservices.yml",
-        "templates/jobs/maven-test.yml"
-      ]
+      "commit_label": "Shared library version"
     }
   ],
   "failed_log_max_chars": 8000,
   "failed_log_tail_lines": 100,
   "context_max_chars": 20000,
-  "context_max_items": 12
+  "context_max_items": 12,
+  "discovery": {
+    "entry_pipeline": "azure-pipelines.yml"
+  }
 }

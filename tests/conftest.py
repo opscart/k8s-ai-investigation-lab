@@ -94,6 +94,9 @@ class FakeAzureDevOps:
     def log(self, _build_id, log_id):
         return self.logs[log_id]
 
+    def repository_tree(self, repository, commit):
+        return sorted(p for (r, c, p) in self.files if (r, c) == (repository, commit))
+
     def repository_file(self, repository, commit, path):
         return self.files[(repository, commit, path)]
 

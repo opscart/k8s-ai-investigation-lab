@@ -43,6 +43,34 @@ bounded windows. Recognized credentials are replaced with typed placeholders in 
 and repository excerpts before the capture is written. Secret-bearing file types are rejected.
 The capture stores selection and redaction counts, never matched secret values.
 
+## Deterministic context discovery
+
+An optional `discovery` block in the capture policy replaces per-file allowlists. After the
+application and shared-library commits are resolved (from `Build.SourceVersion` and the
+provenance log; an unresolved commit fails the capture), the collector lists files only in
+policy repositories at those exact commits, never a branch. It starts at `entry_pipeline`,
+parses `resources.repositories` aliases and `template: path@alias` references (relative paths
+resolve against the referencing file), and walks breadth-first with a visited set (cycles are
+counted and skipped) bounded by depth and files inspected. Aliases that do not map to a policy
+repository are reported, never fetched.
+
+Anchors come from the sanitized failed-log selection and the pipeline files: source file and
+line references, class and test names, Maven/Gradle goals, template paths, and property or
+parameter names. Candidates score by fixed weights (pipeline entry 100, template 90, source
+location 80, class 75, test counterpart 70, build file 40); ties break by role then path.
+Only top-ranked files are fetched and excerpted (windows around referenced lines when a file
+exceeds `max_excerpt_chars`). Explicit `allowed_files` remain an optional override, are always
+included first and are not duplicated.
+
+Every excerpt passes the existing path rejection, Secret-manifest rejection and redaction;
+rejected files are counted as omitted by policy, never echoed. Each excerpt records role,
+repository, commit, path, line range and reason in its evidence source and in
+`context_selection`, which also reports repositories/files considered, files and excerpts
+selected, characters, reason counts, omissions by policy and budget, unresolved anchors and the
+bounds used. Preview prints the summary and exact excerpts; both are in the approval
+fingerprint. Preview and run re-check that captured text is unchanged by sanitization.
+Capture and preview make no model request; analysis stays one call with zero tools.
+
 ## Foundry adapter
 
 Uses AzureCliCredential, AIProjectClient, prompt agent versions and the project Responses

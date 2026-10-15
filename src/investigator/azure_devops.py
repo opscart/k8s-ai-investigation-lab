@@ -21,6 +21,7 @@ from .contracts import (
     Evidence,
     Incident,
 )
+from .discovery import ResponseTooLarge, discover_context, evidence_id, excerpt_source
 from .log_selection import select_failure_log
 from .sanitization import (
     contains_kubernetes_secret_manifest,
@@ -46,7 +47,7 @@ def _https_get(url: str, headers: dict[str, str], limit: int) -> bytes:
     except (urllib.error.URLError, TimeoutError, OSError) as exc:
         raise ValueError("Azure DevOps request failed") from exc
     if len(data) > limit:
-        raise ValueError("Azure DevOps response exceeded the configured limit")
+        raise ResponseTooLarge("Azure DevOps response exceeded the configured limit")
     return data
 
 
@@ -128,6 +129,33 @@ class AzureDevOpsClient:
             {"api-version": "7.1"},
         )
 
+    def repository_tree(self, repository: str, commit: str) -> list[str]:
+        """List file paths at one immutable commit; branch names are never accepted."""
+
+        if not COMMIT_PATTERN.fullmatch(commit):
+            raise ValueError("Repository listing requires a full immutable commit")
+        data = self.json(
+            f"git/repositories/{urllib.parse.quote(repository, safe='')}/items",
+            {
+                "scopePath": "/",
+                "recursionLevel": "Full",
+                "versionDescriptor.version": commit,
+                "versionDescriptor.versionType": "commit",
+                "api-version": "7.1",
+            },
+            4_000_000,
+        )
+        items = data.get("value")
+        if not isinstance(items, list):
+            raise ValueError("Azure DevOps repository listing is unavailable")
+        return sorted(
+            item["path"].lstrip("/")
+            for item in items
+            if isinstance(item, dict)
+            and item.get("isFolder") is not True
+            and type(item.get("path")) is str
+        )
+
     def repository_file(self, repository: str, commit: str, path: str) -> str:
         encoded_repository = urllib.parse.quote(repository, safe="")
         return self.text(
@@ -204,6 +232,13 @@ def _numbered_excerpt(text: str, limit: int = 12000) -> tuple[str, int]:
     return "\n".join(numbered), len(numbered)
 
 
+def _valid_path(path: str) -> None:
+    if path.startswith("/") or "\\" in path or ".." in path.split("/"):
+        raise ValueError("Invalid allowed repository path")
+    if not repository_path_allowed(path):
+        raise ValueError("Credential-bearing repository file types are not allowed")
+
+
 def capture_build(
     client: AzureDevOpsClient,
     policy: AzureDevOpsCapturePolicy,
@@ -271,25 +306,18 @@ def capture_build(
     total_items = 0
     redactions = dict(sanitized_log.redactions)
     normalized_provenance = []
+    resolved = []
+    explicit: dict[str, list[str]] = {}
     for rule in policy.repositories:
         commit = _repository_commit(rule, build, provenance_log)
         normalized_provenance.append(f"{rule.role}={rule.repository}@{commit}")
+        resolved.append((rule, commit))
         paths = sorted(set(rule.allowed_files))
         if len(paths) != len(rule.allowed_files):
             raise ValueError("Allowed repository files must be unique")
-        repositories.append(
-            CapturedRepository(
-                role=rule.role,
-                repository=rule.repository,
-                commit=commit,
-                files=paths,
-            )
-        )
+        explicit[rule.role] = paths
         for path in paths:
-            if path.startswith("/") or "\\" in path or ".." in path.split("/"):
-                raise ValueError("Invalid allowed repository path")
-            if not repository_path_allowed(path):
-                raise ValueError("Credential-bearing repository file types are not allowed")
+            _valid_path(path)
             content = client.repository_file(rule.repository, commit, path)
             if contains_kubernetes_secret_manifest(content):
                 raise ValueError("Kubernetes Secret manifests are not allowed in provider context")
@@ -297,12 +325,10 @@ def capture_build(
             for kind, count in sanitized_content.redactions.items():
                 redactions[kind] = redactions.get(kind, 0) + count
             excerpt, line_count = _numbered_excerpt(sanitized_content.text)
-            source = (
-                f"role={rule.role}; Azure DevOps {policy.project}/{rule.repository}@{commit}:"
-                f"{path}:L1-L{line_count}"
+            source = excerpt_source(
+                policy.project, rule, commit, path, 1, line_count, "policy_allowed_file"
             )
-            identity = hashlib.sha256(source.encode()).hexdigest()[:24]
-            context.append(Evidence(id=f"repo_{identity}", source=source, text=excerpt))
+            context.append(Evidence(id=evidence_id(source), source=source, text=excerpt))
             hashes[f"{rule.role}:{path}"] = hashlib.sha256(content.encode()).hexdigest()
             total_chars += len(excerpt)
             total_items += 1
@@ -310,6 +336,40 @@ def capture_build(
                 raise ValueError(
                     "Allowlisted repository context exceeds the configured pack bounds"
                 )
+
+    selection = None
+    if policy.discovery is not None:
+        found = discover_context(
+            client=client,
+            project=policy.project,
+            policy=policy.discovery,
+            rules=resolved,
+            entry_role=next(
+                r.role for r in policy.repositories if r.commit_source == "build_source"
+            ),
+            log_text=sanitized_log.text,
+            taken={(role, path) for role, paths in explicit.items() for path in paths},
+            total_chars=total_chars,
+            total_items=total_items,
+            max_total_chars=policy.context_max_chars,
+            max_total_items=policy.context_max_items,
+            known_text="\n".join(item.text for item in context),
+        )
+        context.extend(found.evidence)
+        hashes.update(found.hashes)
+        selection = found.summary
+        for kind, count in found.redactions.items():
+            redactions[kind] = redactions.get(kind, 0) + count
+        for role, paths in found.files.items():
+            explicit[role] = sorted([*explicit[role], *paths])
+    for rule, commit in resolved:
+        repositories.append(
+            CapturedRepository(
+                role=rule.role, repository=rule.repository, commit=commit, files=explicit[rule.role]
+            )
+        )
+    if not context:
+        raise ValueError("No repository context was selected")
 
     incident.evidence.append(
         Evidence(
@@ -334,4 +394,5 @@ def capture_build(
             selection_reasons=selected_log.reasons,
             redactions=dict(sorted(redactions.items())),
         ),
+        context_selection=selection,
     )
