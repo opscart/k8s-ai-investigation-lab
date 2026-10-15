@@ -10,6 +10,7 @@ from pathlib import Path
 from pydantic import ValidationError
 
 from .contracts import (
+    CapturedContextPack,
     Evidence,
     Incident,
     RepositoryPolicy,
@@ -54,7 +55,18 @@ def prepare(args):
         for value in (args.input_price_per_million, args.output_price_per_million)
     ):
         raise ValueError("Token prices cannot be negative")
-    incident = Incident.model_validate_json(read_bounded(args.case))
+    if bool(args.case) == bool(args.capture):
+        raise ValueError("Provide exactly one of --case or --capture")
+    capture = None
+    if args.capture:
+        if args.mode != "context-pack":
+            raise ValueError("Captured evidence is supported only in context-pack mode")
+        if args.logs or args.repository_set or any((args.repo, args.commit, args.policy)):
+            raise ValueError("Captured evidence cannot be combined with other evidence inputs")
+        capture = CapturedContextPack.model_validate_json(read_bounded(args.capture, 262144))
+        incident = capture.incident.model_copy(deep=True)
+    else:
+        incident = Incident.model_validate_json(read_bounded(args.case))
     if args.logs:
         text = read_bounded(args.logs, 12000)
         incident.evidence.append(
@@ -64,14 +76,25 @@ def prepare(args):
         raise ValueError("Evidence IDs must be unique")
     repository = None
     repository_config = None
+    repository_inventory = None
+    content_hashes = {}
     legacy_repository = any((args.repo, args.commit, args.policy))
     if args.repository_set and legacy_repository:
         raise ValueError("Use either --repository-set or the legacy single-repository flags")
-    if args.repository_set:
+    if capture:
+        repository_inventory = {
+            "service": incident.workload,
+            "repositories": [item.model_dump() for item in capture.repositories],
+        }
+        context_evidence = list(capture.context_evidence)
+        content_hashes = capture.content_hashes
+    elif args.repository_set:
         repository, repository_config = load_repository_set(args.repository_set)
     elif args.mode == "agent":
         if not all((args.repo, args.commit, args.policy)):
-            raise ValueError("Agent mode requires --repository-set or --repo, --commit and --policy")
+            raise ValueError(
+                "Agent mode requires --repository-set or --repo, --commit and --policy"
+            )
         policy = RepositoryPolicy.model_validate_json(read_bounded(args.policy))
         repository = RepositorySet(
             incident.workload,
@@ -79,32 +102,39 @@ def prepare(args):
         )
     elif legacy_repository:
         raise ValueError("Single-repository flags are supported only in agent mode")
-    if args.mode == "context-pack" and repository is None:
-        raise ValueError("Context-pack mode requires --repository-set")
+    if args.mode == "context-pack" and repository is None and repository_inventory is None:
+        raise ValueError("Context-pack mode requires --repository-set or --capture")
     if args.mode == "baseline" and repository is not None:
         raise ValueError("Baseline mode cannot use repositories")
-    context_evidence = []
-    if args.mode == "context-pack":
+    if not capture:
+        context_evidence = []
+    if args.mode == "context-pack" and repository:
         context_evidence = repository.context_pack(
             incident,
             repository_config.context_max_chars,
             repository_config.context_max_items,
         )
+    combined_ids = [item.id for item in [*incident.evidence, *context_evidence]]
+    if len(set(combined_ids)) != len(combined_ids):
+        raise ValueError("Incident and repository evidence IDs must be unique")
+    if any(item.id.startswith("repo_") for item in incident.evidence):
+        raise ValueError("repo_ evidence IDs are reserved for repository context")
     scope = {
         "incident": incident.model_dump(),
         "mode": args.mode,
         "endpoint": os.getenv("AZURE_AI_PROJECT_ENDPOINT", ""),
         "model": os.getenv("AZURE_AI_MODEL_DEPLOYMENT_NAME", ""),
-        "repository": repository.inventory() if repository else None,
-        "blobs": repository.blobs if repository else {},
+        "repository": repository.inventory() if repository else repository_inventory,
+        "blobs": repository.blobs if repository else content_hashes,
         "context_pack": [item.model_dump() for item in context_evidence],
+        "capture_source": capture.source_reference if capture else None,
         "pricing": {
             "input_per_million": args.input_price_per_million,
             "output_per_million": args.output_price_per_million,
         },
     }
     digest = hashlib.sha256(json.dumps(scope, sort_keys=True).encode()).hexdigest()
-    return incident, repository, context_evidence, scope, digest
+    return incident, repository, repository_inventory, context_evidence, scope, digest
 
 
 def add_cost_estimate(stats: dict, input_price: float | None, output_price: float | None) -> None:
@@ -127,7 +157,12 @@ def parser():
     root = argparse.ArgumentParser(description="Standalone Foundry investigation lab")
     root.add_argument("action", choices=["preview", "run"])
     root.add_argument("--mode", choices=["baseline", "context-pack", "agent"], required=True)
-    root.add_argument("--case", type=Path, required=True)
+    root.add_argument("--case", type=Path)
+    root.add_argument(
+        "--capture",
+        type=Path,
+        help="Previously captured, bounded Azure DevOps evidence pack",
+    )
     root.add_argument("--repo", type=Path)
     root.add_argument("--commit")
     root.add_argument("--policy", type=Path)
@@ -152,7 +187,7 @@ def parser():
 def main(argv=None) -> int:
     args = parser().parse_args(argv)
     try:
-        incident, repository, context_evidence, scope, digest = prepare(args)
+        incident, repository, repository_inventory, context_evidence, scope, digest = prepare(args)
         if args.action == "preview":
             print(json.dumps(scope, indent=2))
             if repository and args.mode == "agent":
@@ -188,6 +223,7 @@ def main(argv=None) -> int:
                     repository,
                     mode=args.mode,
                     prefetched_evidence=context_evidence,
+                    repository_inventory=repository_inventory,
                 )
                 result["model"] = provider.model
         except Exception as exc:

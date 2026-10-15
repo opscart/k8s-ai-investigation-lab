@@ -43,6 +43,7 @@ def run(
     *,
     mode: str | None = None,
     prefetched_evidence: list[Evidence] | None = None,
+    repository_inventory: dict | None = None,
 ) -> dict:
     limits = limits or Limits()
     mode = mode or ("agent" if repository else "baseline")
@@ -50,8 +51,12 @@ def run(
         raise ValueError("Unknown investigation mode")
     if mode == "baseline" and repository is not None:
         raise ValueError("Baseline mode cannot use repositories")
-    if mode in {"context-pack", "agent"} and repository is None:
+    if mode == "agent" and repository is None:
         raise ValueError("Repository-backed mode requires repositories")
+    if mode == "context-pack" and repository is None and repository_inventory is None:
+        raise ValueError("Context-pack mode requires repository provenance")
+    if repository is not None and repository_inventory is not None:
+        raise ValueError("Repository provenance was supplied twice")
     prefetched_evidence = prefetched_evidence or []
     if mode != "context-pack" and prefetched_evidence:
         raise ValueError("Prefetched repository evidence requires context-pack mode")
@@ -63,8 +68,9 @@ def run(
         raise ValueError("repo_ evidence IDs are reserved for repository tools")
     payload = incident.model_dump()
     payload["evidence"] = [item.model_dump() for item in evidence.values()]
-    if repository:
-        payload["repository_inventory"] = repository.inventory()
+    inventory = repository.inventory() if repository else repository_inventory
+    if inventory:
+        payload["repository_inventory"] = inventory
     message = "Return the investigation result as JSON.\n" + json.dumps(payload)
     consumed_chars = len(instructions()) + len(message)
     inputs = [{"role": "user", "content": message}]
@@ -98,7 +104,7 @@ def run(
                 "schema_version": "1",
                 "case_id": incident.case_id,
                 "mode": mode,
-                "repository": repository.inventory() if repository else None,
+                "repository": inventory,
                 "diagnosis": diagnosis.model_dump(),
                 "stats": stats,
                 "trajectory": trajectory,

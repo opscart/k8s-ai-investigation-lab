@@ -1,7 +1,8 @@
 # Architecture and evidence boundaries
 
-The CLI owns local repository access and review. Foundry owns agent reasoning and tool
-selection. Function requests are suggestions: local dispatch enforces the allowlist.
+The CLI owns repository access and review. Foundry owns reasoning. Agent-mode function
+requests are suggestions: local dispatch enforces the allowlist. Context-pack mode instead
+retrieves everything deterministically before one model call.
 
 ```mermaid
 flowchart TD
@@ -14,6 +15,12 @@ flowchart TD
   F --> G[Local report and human evaluation]
 ```
 
+For Azure DevOps build investigations, a separate read-only capture command retrieves one
+build record, its timeline, a named failed log, a named provenance log, and explicitly
+allowlisted files at the resolved commits. The model never receives Azure DevOps credentials
+or calls Azure DevOps tools. The resulting local artifact is previewed and fingerprinted
+before context-pack mode sends it to Foundry.
+
 ## Evidence provenance
 
 Captured incident evidence carries IDs and source labels. The synthetic fixtures explicitly
@@ -21,11 +28,17 @@ identify themselves. Real exports should include timestamps, workload/container 
 image digest, deployed source commit, and actual configuration. Never relabel synthetic
 or candidate source as verified live evidence.
 
-Repository retrieval supplies repository ID, commit, path and line range. The operator
-must establish the deployed-revision mapping; this version does not discover it.
+Repository retrieval supplies repository ID, commit, path and line range. Local-clone mode
+requires the operator to establish the revision mapping. Azure DevOps capture resolves the
+application revision from `Build.SourceVersion` and additional repository revisions only
+from configured, unambiguous provenance-log labels.
 Files are read using Git object IDs, not working-tree paths or model-supplied shell text.
 Git fetching and authentication remain outside model execution. Existing clones can be
 updated manually, then a specific commit selected for each investigation.
+
+Azure DevOps capture uses a PAT only when `AZURE_DEVOPS_EXT_PAT` is explicitly present;
+otherwise it uses the current Azure CLI identity. Authentication headers are never stored
+in the capture. The selected failed log is bounded but not automatically sanitized.
 
 ## Foundry adapter
 

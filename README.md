@@ -17,9 +17,10 @@ Initial runnable foundation, **not a proven diagnosis product**. Includes:
 - Synthetic probe-mismatch and insufficient-evidence cases with a human scoring rubric.
 - Offline tests for tool boundaries, approval, provider wiring and result validation.
 
-Live Azure validation requires your Foundry project. No live Kubernetes connector,
-Azure DevOps API connector, indexed RAG, OpsCart API, or remediation is implemented yet.
-Existing local clones from GitHub or Azure DevOps work with the repository tools.
+Live Azure validation requires your Foundry project. The lab includes a bounded,
+read-only Azure DevOps build capture path, but no live Kubernetes connector, indexed
+RAG, OpsCart API, or remediation. Existing local clones from GitHub or Azure DevOps
+also work with the repository tools.
 
 ## 1. Install locally
 
@@ -206,6 +207,51 @@ mvn test -Dbilling.api.url=http://billing-api.invalid
 The first command should fail with `startup dependency configuration invalid`; the
 second should pass.
 
+## Capture one Azure DevOps build without MCP traversal
+
+The Azure DevOps path avoids loading a broad MCP tool catalog into every model turn.
+Application code performs deterministic retrieval first; the approved context pack is
+then sent in one Foundry request with no model tools.
+
+Copy and review the example policy. Timeline step names and provenance labels must match
+the pipeline exactly. Every source file must be explicitly allowlisted.
+
+```bash
+cp config/azure-devops-build.example.json .local/build-policy.json
+
+investigate-ado capture \
+  --build-id 679 \
+  --policy .local/build-policy.json \
+  --output .local/build-679-capture.json
+```
+
+Authentication first uses `AZURE_DEVOPS_EXT_PAT` when present; otherwise it uses the
+current Azure CLI identity. That identity needs read access to builds, logs and the named
+repositories. Credentials are not written into the capture.
+
+Capture performs no model request. It retrieves only the selected build/timeline, one
+bounded failed-step log, one provenance log, and allowlisted files at the exact commits.
+Only configured commit labels are retained from the provenance log.
+
+The failed log and repository excerpts are **not automatically sanitized**. Inspect the
+capture locally before approval, keep it under ignored `.local/`, and do not send real
+corporate content to a personal Foundry project.
+
+```bash
+investigate preview --mode context-pack \
+  --capture .local/build-679-capture.json
+
+investigate run --mode context-pack \
+  --capture .local/build-679-capture.json \
+  --approve PASTE_CAPTURE_FINGERPRINT \
+  --output .local/build-679-result
+```
+
+Preview binds the destination project/model, commit-pinned inventory, content hashes,
+failed log and exact source excerpts into the approval fingerprint. Any edit requires a
+new preview and approval. Run makes one model call and zero tool calls; it never queues,
+reruns or modifies a pipeline.
+
 ## Output
 
 Reports contain assessment, likely cause, alternatives, proposed correction, verification,
@@ -227,6 +273,8 @@ quoted by the model; keep real reports private in the ignored `.local/` director
   regular UTF-8 Git blobs only. Context packs default to 20,000 characters / 12 chunks.
 - At most 8 search hits; file reads at most 120 lines / 10,000 characters.
 - No shell tool, cluster writes, automatic changes, indexing or background polling.
+- Azure DevOps capture is read-only and bounded, but it is not a secret scanner or a
+  redaction guarantee. Human approval remains mandatory.
 - Local approval is a CLI consent mechanism, not multi-user authorization.
 
 ## Development

@@ -56,6 +56,45 @@ class RepositorySetConfig(StrictModel):
     context_max_items: int = Field(default=12, ge=1, le=30)
 
 
+class CapturedRepository(StrictModel):
+    role: str = Field(min_length=1, max_length=40, pattern=r"^[a-z][a-z0-9_-]*$")
+    repository: str = Field(min_length=1, max_length=200)
+    commit: str = Field(pattern=r"^[0-9a-f]{40}([0-9a-f]{24})?$")
+    files: list[str] = Field(min_length=1, max_length=100)
+
+
+class CapturedContextPack(StrictModel):
+    schema_version: Literal["1"]
+    source_type: Literal["azure_devops_build"]
+    source_reference: str = Field(min_length=1, max_length=500)
+    incident: Incident
+    repositories: list[CapturedRepository] = Field(min_length=1, max_length=3)
+    context_evidence: list[Evidence] = Field(min_length=1, max_length=30)
+    content_hashes: dict[str, str] = Field(max_length=100)
+
+
+class AzureDevOpsRepositoryRule(StrictModel):
+    role: str = Field(min_length=1, max_length=40, pattern=r"^[a-z][a-z0-9_-]*$")
+    repository: str = Field(min_length=1, max_length=200)
+    commit_source: Literal["build_source", "provenance_log"]
+    commit_label: str | None = Field(default=None, min_length=1, max_length=100)
+    allowed_files: list[str] = Field(min_length=1, max_length=30)
+
+
+class AzureDevOpsCapturePolicy(StrictModel):
+    organization_url: str = Field(min_length=1, max_length=500)
+    project: str = Field(min_length=1, max_length=200)
+    workload: str = Field(min_length=1, max_length=200)
+    question: str = Field(min_length=1, max_length=2000)
+    failed_step_name: str = Field(min_length=1, max_length=200)
+    provenance_step_name: str = Field(min_length=1, max_length=200)
+    repositories: list[AzureDevOpsRepositoryRule] = Field(min_length=1, max_length=3)
+    failed_log_max_chars: int = Field(default=12000, ge=1000, le=12000)
+    failed_log_tail_lines: int = Field(default=200, ge=10, le=500)
+    context_max_chars: int = Field(default=20000, ge=2000, le=50000)
+    context_max_items: int = Field(default=12, ge=1, le=30)
+
+
 class Limits(StrictModel):
     model_calls: int = Field(default=6, ge=1, le=10)
     tool_calls: int = Field(default=12, ge=0, le=30)

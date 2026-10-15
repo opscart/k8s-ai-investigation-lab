@@ -1,0 +1,35 @@
+{
+  "organization_url": "https://dev.azure.com/opscartinc",
+  "project": "AI-DevOps-POC",
+  "workload": "AI-DevOps-POC/pipeline-app-demo-ci",
+  "question": "Why did this build fail? Identify the smallest correction supported by the failed log and the exact application and shared-library commits used by the build.",
+  "failed_step_name": "Run Maven tests",
+  "provenance_step_name": "Print build provenance",
+  "repositories": [
+    {
+      "role": "application",
+      "repository": "pipeline-app-demo",
+      "commit_source": "build_source",
+      "allowed_files": [
+        "azure-pipelines.yml",
+        "pom.xml",
+        "src/main/java/com/opscart/lab/DependencyConfig.java",
+        "src/test/java/com/opscart/lab/DependencyConfigTest.java"
+      ]
+    },
+    {
+      "role": "shared_library",
+      "repository": "pipeline-shared-library-demo",
+      "commit_source": "provenance_log",
+      "commit_label": "Shared library version",
+      "allowed_files": [
+        "templates/pipelines/ci-java-microservices.yml",
+        "templates/jobs/maven-test.yml"
+      ]
+    }
+  ],
+  "failed_log_max_chars": 8000,
+  "failed_log_tail_lines": 100,
+  "context_max_chars": 20000,
+  "context_max_items": 12
+}
