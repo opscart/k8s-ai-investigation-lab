@@ -53,7 +53,11 @@ class FakeAzureDevOps:
         app_commit = "a" * 40
         shared_commit = "b" * 40
         self.logs = {
-            7: "download noise\n[ERROR] startup dependency configuration invalid\nBUILD FAILURE",
+            7: (
+                "Downloaded from central: synthetic artifact\n"
+                "[ERROR] startup dependency configuration invalid\n"
+                "BUILD FAILURE"
+            ),
             6: (f"Build.SourceVersion: {app_commit}\nShared library version: {shared_commit}\n"),
         }
         self.files = {

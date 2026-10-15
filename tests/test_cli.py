@@ -151,6 +151,9 @@ def test_captured_azure_devops_pack_previews_without_retrieval(
     assert "EXACT BOUNDED REPOSITORY CONTEXT TO BE SENT" in output
     assert "billing.service.url" in output
     assert "buildId=679" in output
+    assert '"capture_safety"' in output
+    assert '"raw_log_chars"' in output
+    assert '"residual_findings": 0' in output
 
 
 def test_capture_cannot_be_combined_with_case(tmp_path, incident, capsys, ado_client, ado_policy):
