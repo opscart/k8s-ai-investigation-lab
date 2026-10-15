@@ -21,6 +21,7 @@ from .report import markdown
 from .repository import Repository
 from .repository_set import RepositoryBinding, RepositorySet
 from .runner import run
+from .sanitization import SensitiveDataError, sanitize_provider_text
 
 
 def read_bounded(path: Path, limit: int = 65536) -> str:
@@ -65,6 +66,13 @@ def prepare(args):
             raise ValueError("Captured evidence cannot be combined with other evidence inputs")
         capture = CapturedContextPack.model_validate_json(read_bounded(args.capture, 262144))
         incident = capture.incident.model_copy(deep=True)
+        try:
+            for item in [*capture.incident.evidence, *capture.context_evidence]:
+                if sanitize_provider_text(item.text).text != item.text:
+                    raise SensitiveDataError("unsanitized")
+        except SensitiveDataError:
+            # Never echo the matched text; the capture must be regenerated.
+            raise ValueError("Captured evidence contains unsanitized credentials") from None
     else:
         incident = Incident.model_validate_json(read_bounded(args.case))
     if args.logs:
@@ -131,6 +139,11 @@ def prepare(args):
         "context_pack": [item.model_dump() for item in context_evidence],
         "capture_source": capture.source_reference if capture else None,
         "capture_safety": capture_safety,
+        "context_selection": (
+            capture.context_selection.model_dump()
+            if capture and capture.context_selection
+            else None
+        ),
         "pricing": {
             "input_per_million": args.input_price_per_million,
             "output_per_million": args.output_price_per_million,
