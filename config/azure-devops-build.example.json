@@ -28,8 +28,8 @@
       ]
     }
   ],
-  "failed_log_max_chars": 12000,
-  "failed_log_tail_lines": 200,
+  "failed_log_max_chars": 8000,
+  "failed_log_tail_lines": 100,
   "context_max_chars": 20000,
   "context_max_items": 12
 }
