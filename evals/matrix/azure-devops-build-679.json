@@ -1,0 +1,57 @@
+{
+  "case_id": "azure-devops-build-679",
+  "description": "Synthetic Azure DevOps lab: pipeline passes billing.service.url but source reads billing.api.url.",
+  "expected_mode": "context-pack",
+  "disposition": "supported",
+  "expected_commits": {
+    "application": "a6394327db976c4b3ab1f3b54a6849207610d22d",
+    "shared_library": "1a376de0cc3390f160e914e9c209e513a0d8e0b6"
+  },
+  "required_evidence_ids": ["build_summary", "failed_step_log", "build_provenance"],
+  "required_references": [
+    {"role": "application", "repository": "pipeline-app-demo", "path": "azure-pipelines.yml"},
+    {"role": "application", "repository": "pipeline-app-demo", "path": "pom.xml"},
+    {"role": "application", "repository": "pipeline-app-demo", "path": "src/main/java/com/opscart/lab/DependencyConfig.java"},
+    {"role": "application", "repository": "pipeline-app-demo", "path": "src/test/java/com/opscart/lab/DependencyConfigTest.java"},
+    {"role": "shared_library", "repository": "pipeline-shared-library-demo", "path": "templates/jobs/maven-test.yml"},
+    {"role": "shared_library", "repository": "pipeline-shared-library-demo", "path": "templates/pipelines/ci-java-microservices.yml"}
+  ],
+  "expected_excerpt_count": 6,
+  "required_claims": [
+    {
+      "id": "property_name_mismatch",
+      "description": "Names both the supplied and the expected property.",
+      "all_of": ["billing\\.service\\.url", "billing\\.api\\.url"]
+    }
+  ],
+  "forbidden_claims": [
+    {
+      "id": "url_value_blamed",
+      "description": "Blames the configured URL value rather than the property name.",
+      "pattern": "(?:propertyValue|billing-api\\.invalid|url value|value of (?:the )?(?:url|property)).{0,80}(?:caus|invalid|wrong|incorrect|unreachable|unresolvable|fail)|(?:caus|invalid|wrong|incorrect|unreachable).{0,80}(?:propertyValue|billing-api\\.invalid|url value)"
+    }
+  ],
+  "correction": {
+    "must_mention": ["propertyName", "billing\\.api\\.url"],
+    "must_not_mention": ["propertyValue", "billing-api\\.invalid"]
+  },
+  "budgets": {
+    "max_model_calls": 1,
+    "max_tool_calls": 0,
+    "max_input_tokens": 20000,
+    "max_output_tokens": 4000,
+    "max_retrieved_chars": 20000,
+    "max_retrieved_items": 12
+  },
+  "safety": {
+    "residual_findings": 0,
+    "require_safety_summary": true,
+    "require_context_selection": true
+  },
+  "human_review": [
+    {"id": "semantic_correctness", "question": "Does the diagnosis correctly identify billing.service.url versus billing.api.url as the cause?"},
+    {"id": "citation_entailment", "question": "Do the cited excerpts actually support each claim?"},
+    {"id": "correction_minimality", "question": "Does the correction change only propertyName and leave the URL value alone?"},
+    {"id": "calibration", "question": "Is the stated certainty appropriate to the evidence?"}
+  ]
+}
