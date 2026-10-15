@@ -73,7 +73,8 @@ def test_safe_commit_provenance_is_wired_through_templates():
 def test_fixture_has_only_synthetic_urls_and_no_sensitive_or_deployment_content():
     contents = "\n".join(
         path.read_text()
-        for path in FIXTURE.rglob("*")
+        for root in (APP, SHARED)
+        for path in root.rglob("*")
         if path.is_file() and "target" not in path.parts
     )
     assert not re.search(r"(?i)\b(?:pat|secret|credential|token|password|corporate)\b", contents)

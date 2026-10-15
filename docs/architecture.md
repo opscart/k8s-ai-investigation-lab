@@ -98,6 +98,15 @@ destination and retention policy. Cloud conversations are cleaned up on normal e
 interrupts, network failures or process death can leave resources. Project monitoring
 and billing records have their own retention. .gitignore is not a data-loss-prevention system.
 
+## Pipeline orchestration (example)
+
+The example workflow in `examples/azure-devops/investigation-workflow/` adds no new engine.
+Stage 1 runs `investigate-ado capture` and `investigate preview` and publishes the capture,
+preview, fingerprint and a SHA-256 manifest as a run-scoped artifact; a `ManualValidation`
+gate approves that bounded sanitized pack; stage 3 downloads the same artifact, recomputes the
+preview fingerprint, and only on an exact match runs `investigate run` under an Azure service
+connection. Evaluation then runs offline. Model access exists only in the Analyze stage.
+
 ## Future OpsCart adapter
 
 Add an authenticated API accepting the common Incident contract plus an operator-approved
