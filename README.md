@@ -181,6 +181,12 @@ python scripts/compare_results.py \
   .local/multi-agent/*.json
 ```
 
+## Offline evaluation matrix
+
+Saved results can be checked against declarative safety, provenance, evidence, budget and
+claim gates without any model call; semantic correctness stays with a human reviewer. See
+[docs/evaluation.md](docs/evaluation.md).
+
 ## Azure DevOps cross-repository experiment
 
 The synthetic application repository in
