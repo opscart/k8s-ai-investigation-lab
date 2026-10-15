@@ -88,6 +88,7 @@ def prepare(args):
         }
         context_evidence = list(capture.context_evidence)
         content_hashes = capture.content_hashes
+        capture_safety = capture.safety.model_dump() if capture.safety else None
     elif args.repository_set:
         repository, repository_config = load_repository_set(args.repository_set)
     elif args.mode == "agent":
@@ -108,6 +109,7 @@ def prepare(args):
         raise ValueError("Baseline mode cannot use repositories")
     if not capture:
         context_evidence = []
+        capture_safety = None
     if args.mode == "context-pack" and repository:
         context_evidence = repository.context_pack(
             incident,
@@ -128,6 +130,7 @@ def prepare(args):
         "blobs": repository.blobs if repository else content_hashes,
         "context_pack": [item.model_dump() for item in context_evidence],
         "capture_source": capture.source_reference if capture else None,
+        "capture_safety": capture_safety,
         "pricing": {
             "input_per_million": args.input_price_per_million,
             "output_per_million": args.output_price_per_million,

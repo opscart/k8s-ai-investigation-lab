@@ -5,7 +5,8 @@ from dataclasses import dataclass
 
 _ANCHORS = (
     ("azure_error", re.compile(r"##\[error\]", re.IGNORECASE)),
-    ("exception", re.compile(r"\b(?:exception|error)(?::|\b)", re.IGNORECASE)),
+    ("error_marker", re.compile(r"\[(?:ERROR|FATAL)\]", re.IGNORECASE)),
+    ("exception", re.compile(r"\b(?:[A-Za-z_$][\w$]*(?:Exception|Error)|Exception)\b")),
     ("failure_summary", re.compile(r"\b(?:build|test(?:s)?)\s+fail(?:ed|ure)\b", re.IGNORECASE)),
     ("stack_frame", re.compile(r"^\s*at\s+[\w.$]+\([^():]+:\d+\)")),
     ("source_location", re.compile(r"\b[^\s:]+\.(?:java|kt|go|py|js|ts|cs|cpp|c|h):\d+\b")),

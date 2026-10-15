@@ -24,6 +24,8 @@ def test_select_failure_log_keeps_explainable_failure_windows_and_drops_noise():
     assert "L7:     at com.opscart.lab.DependencyConfig" in selected.text
     assert "L9: ##[error]Bash exited with code '1'." in selected.text
     assert selected.reasons["azure_error"] == 1
+    assert selected.reasons["error_marker"] == 3
+    assert selected.reasons["exception"] == 1
     assert selected.reasons["stack_frame"] == 1
     assert selected.selected_lines <= 100
     assert selected.selected_chars <= 8000
