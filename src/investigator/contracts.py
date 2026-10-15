@@ -63,6 +63,16 @@ class CapturedRepository(StrictModel):
     files: list[str] = Field(min_length=1, max_length=100)
 
 
+class CaptureSafetySummary(StrictModel):
+    raw_log_chars: int = Field(ge=1)
+    raw_log_lines: int = Field(ge=1)
+    selected_log_chars: int = Field(ge=1)
+    selected_log_lines: int = Field(ge=1)
+    selection_reasons: dict[str, int] = Field(max_length=20)
+    redactions: dict[str, int] = Field(max_length=20)
+    residual_findings: Literal[0] = 0
+
+
 class CapturedContextPack(StrictModel):
     schema_version: Literal["1"]
     source_type: Literal["azure_devops_build"]
@@ -71,6 +81,7 @@ class CapturedContextPack(StrictModel):
     repositories: list[CapturedRepository] = Field(min_length=1, max_length=3)
     context_evidence: list[Evidence] = Field(min_length=1, max_length=30)
     content_hashes: dict[str, str] = Field(max_length=100)
+    safety: CaptureSafetySummary | None = None
 
 
 class AzureDevOpsRepositoryRule(StrictModel):
@@ -89,8 +100,8 @@ class AzureDevOpsCapturePolicy(StrictModel):
     failed_step_name: str = Field(min_length=1, max_length=200)
     provenance_step_name: str = Field(min_length=1, max_length=200)
     repositories: list[AzureDevOpsRepositoryRule] = Field(min_length=1, max_length=3)
-    failed_log_max_chars: int = Field(default=12000, ge=1000, le=12000)
-    failed_log_tail_lines: int = Field(default=200, ge=10, le=500)
+    failed_log_max_chars: int = Field(default=8000, ge=1000, le=12000)
+    failed_log_tail_lines: int = Field(default=100, ge=10, le=500)
     context_max_chars: int = Field(default=20000, ge=2000, le=50000)
     context_max_items: int = Field(default=12, ge=1, le=30)
 

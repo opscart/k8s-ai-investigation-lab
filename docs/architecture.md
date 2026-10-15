@@ -38,7 +38,10 @@ updated manually, then a specific commit selected for each investigation.
 
 Azure DevOps capture uses a PAT only when `AZURE_DEVOPS_EXT_PAT` is explicitly present;
 otherwise it uses the current Azure CLI identity. Authentication headers are never stored
-in the capture. The selected failed log is bounded but not automatically sanitized.
+in the capture. Failed-log evidence is selected locally from explainable error anchors and
+bounded windows. Recognized credentials are replaced with typed placeholders in both logs
+and repository excerpts before the capture is written. Secret-bearing file types are rejected.
+The capture stores selection and redaction counts, never matched secret values.
 
 ## Foundry adapter
 
@@ -57,8 +60,10 @@ https://learn.microsoft.com/en-us/azure/foundry/agents/how-to/tools/function-cal
 
 Preview is entirely local. Explicit approval authorizes the exact incident and the complete
 allowed file set for possible retrieval, destination and model. Only requested excerpts
-are returned through tools. Repo content and logs may contain sensitive data: no automatic
-redaction guarantee is made. Model output can quote that content.
+are returned through tools. Repo content and logs may contain sensitive data. Deterministic
+credential redaction reduces risk but cannot guarantee removal of every secret, PII, PHI or
+proprietary value. Model output can quote submitted content, so the exact sanitized pack still
+requires human review.
 
 Do not enable SDK HTTP/body or content tracing for sensitive trials without reviewing the
 destination and retention policy. Cloud conversations are cleaned up on normal exits;

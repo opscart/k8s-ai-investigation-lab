@@ -17,8 +17,15 @@ from .contracts import (
     AzureDevOpsRepositoryRule,
     CapturedContextPack,
     CapturedRepository,
+    CaptureSafetySummary,
     Evidence,
     Incident,
+)
+from .log_selection import select_failure_log
+from .sanitization import (
+    contains_kubernetes_secret_manifest,
+    repository_path_allowed,
+    sanitize_provider_text,
 )
 
 AZURE_DEVOPS_SCOPE = "499b84ac-1321-427f-aa17-267ca6975798/.default"
@@ -152,16 +159,6 @@ def _single_step(records: list, name: str, *, failed: bool) -> dict:
     return candidates[0]
 
 
-def _bounded_tail(text: str, line_limit: int, char_limit: int) -> str:
-    lines = text.splitlines()[-line_limit:]
-    bounded = "\n".join(lines)
-    if len(bounded) > char_limit:
-        bounded = bounded[-char_limit:]
-    if not bounded.strip():
-        raise ValueError("The selected Azure DevOps log is empty")
-    return bounded
-
-
 def _commit_from_log(text: str, label: str) -> str:
     expression = re.compile(
         rf"(?<!\S){re.escape(label)}:\s*([0-9a-fA-F]{{40}}(?:[0-9a-fA-F]{{24}})?)(?!\S)"
@@ -231,11 +228,12 @@ def capture_build(
     provenance_step = _single_step(records, policy.provenance_step_name, failed=False)
     failed_log_id = failed_step["log"]["id"]
     provenance_log_id = provenance_step["log"]["id"]
-    failed_log = _bounded_tail(
+    selected_log = select_failure_log(
         client.log(build_id, failed_log_id),
-        policy.failed_log_tail_lines,
-        policy.failed_log_max_chars,
+        line_limit=policy.failed_log_tail_lines,
+        char_limit=policy.failed_log_max_chars,
     )
+    sanitized_log = sanitize_provider_text(selected_log.text)
     provenance_log = client.log(build_id, provenance_log_id)
 
     definition = build.get("definition") if isinstance(build.get("definition"), dict) else {}
@@ -261,7 +259,7 @@ def capture_build(
             Evidence(
                 id="failed_step_log",
                 source=f"Azure DevOps build {build_id} log {failed_log_id}: {policy.failed_step_name}",
-                text=failed_log,
+                text=sanitized_log.text,
             ),
         ],
     )
@@ -271,6 +269,7 @@ def capture_build(
     hashes = {}
     total_chars = 0
     total_items = 0
+    redactions = dict(sanitized_log.redactions)
     normalized_provenance = []
     for rule in policy.repositories:
         commit = _repository_commit(rule, build, provenance_log)
@@ -289,8 +288,15 @@ def capture_build(
         for path in paths:
             if path.startswith("/") or "\\" in path or ".." in path.split("/"):
                 raise ValueError("Invalid allowed repository path")
+            if not repository_path_allowed(path):
+                raise ValueError("Credential-bearing repository file types are not allowed")
             content = client.repository_file(rule.repository, commit, path)
-            excerpt, line_count = _numbered_excerpt(content)
+            if contains_kubernetes_secret_manifest(content):
+                raise ValueError("Kubernetes Secret manifests are not allowed in provider context")
+            sanitized_content = sanitize_provider_text(content)
+            for kind, count in sanitized_content.redactions.items():
+                redactions[kind] = redactions.get(kind, 0) + count
+            excerpt, line_count = _numbered_excerpt(sanitized_content.text)
             source = (
                 f"role={rule.role}; Azure DevOps {policy.project}/{rule.repository}@{commit}:"
                 f"{path}:L1-L{line_count}"
@@ -320,4 +326,12 @@ def capture_build(
         repositories=repositories,
         context_evidence=context,
         content_hashes=hashes,
+        safety=CaptureSafetySummary(
+            raw_log_chars=selected_log.raw_chars,
+            raw_log_lines=selected_log.raw_lines,
+            selected_log_chars=len(sanitized_log.text),
+            selected_log_lines=selected_log.selected_lines,
+            selection_reasons=selected_log.reasons,
+            redactions=dict(sorted(redactions.items())),
+        ),
     )

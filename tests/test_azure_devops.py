@@ -12,7 +12,11 @@ def test_capture_build_pins_repositories_and_bounds_model_context(ado_client, ad
     assert capture.incident.case_id == "azure-devops-build-679"
     assert capture.incident.evidence[1].id == "failed_step_log"
     assert "BUILD FAILURE" in capture.incident.evidence[1].text
-    assert "download noise" in capture.incident.evidence[1].text
+    assert "Downloaded from central" not in capture.incident.evidence[1].text
+    assert capture.safety.raw_log_lines == 3
+    assert capture.safety.selected_log_lines == 2
+    assert capture.safety.selection_reasons["failure_summary"] == 1
+    assert capture.safety.residual_findings == 0
     assert [(item.role, item.commit) for item in capture.repositories] == [
         ("application", APP_COMMIT),
         ("shared_library", SHARED_COMMIT),
@@ -31,6 +35,49 @@ def test_capture_does_not_copy_unbounded_provenance_log(ado_client, ado_policy):
     serialized = capture_build(ado_client, ado_policy, 679).model_dump_json()
     assert "SECRET-MATERIAL-MUST-NOT-BE-CAPTURED" not in serialized
     assert SHARED_COMMIT in serialized
+
+
+def test_capture_redacts_credentials_from_logs_and_repository_context(ado_client, ado_policy):
+    secrets = [
+        "token-value-that-must-not-leak",
+        "super-secret-value",
+        "github_pat_0123456789abcdefghijklmnop",
+    ]
+    ado_client.logs[7] = (
+        "[ERROR] Authorization: Bearer token-value-that-must-not-leak\n"
+        "[ERROR] password=super-secret-value\n"
+        "[ERROR] BUILD FAILURE"
+    )
+    ado_client.files[("pipeline-app-demo", APP_COMMIT, "azure-pipelines.yml")] = (
+        "propertyName: billing.service.url\napi_key=github_pat_0123456789abcdefghijklmnop\n"
+    )
+
+    capture = capture_build(ado_client, ado_policy, 679)
+    serialized = capture.model_dump_json()
+
+    assert all(secret not in serialized for secret in secrets)
+    assert "[REDACTED:BEARER_TOKEN]" in serialized
+    assert "[REDACTED:SENSITIVE_ASSIGNMENT]" in serialized
+    assert capture.safety.redactions == {
+        "bearer_token": 1,
+        "known_token": 1,
+        "sensitive_assignment": 1,
+    }
+
+
+def test_capture_rejects_credential_bearing_repository_file_types(ado_client, ado_policy):
+    value = ado_policy.model_dump()
+    value["repositories"][0]["allowed_files"] = [".env.production"]
+    with pytest.raises(ValueError, match="Credential-bearing repository file types"):
+        capture_build(ado_client, AzureDevOpsCapturePolicy.model_validate(value), 679)
+
+
+def test_capture_rejects_kubernetes_secret_manifests(ado_client, ado_policy):
+    ado_client.files[("pipeline-app-demo", APP_COMMIT, "azure-pipelines.yml")] = (
+        "apiVersion: v1\nkind: Secret\ndata:\n  password: c2VjcmV0\n"
+    )
+    with pytest.raises(ValueError, match="Kubernetes Secret manifests"):
+        capture_build(ado_client, ado_policy, 679)
 
 
 def test_capture_rejects_ambiguous_shared_commit(ado_client, ado_policy):

@@ -230,12 +230,16 @@ current Azure CLI identity. That identity needs read access to builds, logs and 
 repositories. Credentials are not written into the capture.
 
 Capture performs no model request. It retrieves only the selected build/timeline, one
-bounded failed-step log, one provenance log, and allowlisted files at the exact commits.
-Only configured commit labels are retained from the provenance log.
+failed-step log, one provenance log, and allowlisted files at the exact commits. High-signal
+failure windows are selected locally, repetitive download progress is discarded, and only
+configured commit labels are retained from the provenance log.
 
-The failed log and repository excerpts are **not automatically sanitized**. Inspect the
-capture locally before approval, keep it under ignored `.local/`, and do not send real
-corporate content to a personal Foundry project.
+Recognized credentials in selected logs and repository excerpts are replaced with typed
+placeholders before the capture is written. Secret-bearing file types are rejected, and the
+capture records selection and redaction counts without recording matched values. This is a
+conservative credential filter, not a guarantee that every secret, PII, PHI or proprietary
+value was removed. Inspect the exact capture locally before approval, keep it under ignored
+`.local/`, and do not send real corporate content to a personal Foundry project.
 
 ```bash
 investigate preview --mode context-pack \
@@ -273,8 +277,8 @@ quoted by the model; keep real reports private in the ignored `.local/` director
   regular UTF-8 Git blobs only. Context packs default to 20,000 characters / 12 chunks.
 - At most 8 search hits; file reads at most 120 lines / 10,000 characters.
 - No shell tool, cluster writes, automatic changes, indexing or background polling.
-- Azure DevOps capture is read-only and bounded, but it is not a secret scanner or a
-  redaction guarantee. Human approval remains mandatory.
+- Azure DevOps capture is read-only, bounded and applies deterministic credential redaction;
+  it is not a comprehensive DLP, PII or PHI scanner. Human approval remains mandatory.
 - Local approval is a CLI consent mechanism, not multi-user authorization.
 
 ## Development
