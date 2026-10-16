@@ -16,10 +16,15 @@ production deployment**.
 
 1. **Pipeline.** Create a pipeline from `examples/azure-devops/investigation-workflow/azure-pipelines.yml`
    in this repository. There is deliberately no completion trigger; queue it manually.
-2. **Foundry variables.** Define pipeline variables `AZURE_AI_PROJECT_ENDPOINT`
-   (the Foundry *project* endpoint, `https://<resource>.services.ai.azure.com/api/projects/<project>`)
-   and `AZURE_AI_MODEL_DEPLOYMENT_NAME`. Both are part of the approval fingerprint, so the
-   Capture and Analyze stages must see identical values; a mismatch fails before Foundry.
+2. **Foundry variable group.** Create a dedicated Azure DevOps Library variable group
+   named `k8s-ai-investigation-foundry` containing only
+   `AZURE_AI_PROJECT_ENDPOINT` (the Foundry project endpoint,
+   `https://<resource>.services.ai.azure.com/api/projects/<project>`) and
+   `AZURE_AI_MODEL_DEPLOYMENT_NAME`. Reference this group from the pipeline YAML and,
+   under the variable group's **Pipeline permissions**, authorize only this investigation
+   pipeline. Both values are part of the approval fingerprint, so Capture and Analyze must
+   receive identical values. Do not reuse a broader variable group containing API keys or
+   unrelated credentials.
 3. **Azure service connection.** Create an Azure Resource Manager service connection whose
    identity can call the Foundry project and deployment (for example a Foundry/Azure AI user
    role on that project). Only the Analyze stage uses it; `AzureCLI@2` logs in so the existing
@@ -81,6 +86,7 @@ or change Azure/Kubernetes resources.
 
 ## Not verified offline
 
-The YAML structure and guard script are tested offline. Task input names, service-connection
-authorization, build-service permissions, `ManualValidation` notification and the live Foundry
-call require a real Azure DevOps organization and have not been exercised here.
+The YAML structure and guard script are tested offline. Task input names, variable-group
+authorization, service-connection authorization, build-service permissions,
+`ManualValidation` notification and the live Foundry call require a real Azure DevOps
+organization and have not been exercised here.

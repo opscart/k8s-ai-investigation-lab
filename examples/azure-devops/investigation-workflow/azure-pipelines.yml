@@ -26,6 +26,7 @@ parameters:
     default: ''
 
 variables:
+  - group: k8s-ai-investigation-foundry
   - name: workflowDir
     value: examples/azure-devops/investigation-workflow
   - name: capturePolicy
