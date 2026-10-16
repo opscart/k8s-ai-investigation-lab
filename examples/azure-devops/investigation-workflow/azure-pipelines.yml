@@ -109,16 +109,14 @@ stages:
               notifyUsers: ${{ parameters.approvalReviewers }}
               onTimeout: reject
               instructions: |
-                Review the artifact "investigation-review" published by the Capture stage of
-                THIS run (${{ parameters.failedBuildId }} is the failed build; run $(Build.BuildNumber)).
-                1. Open capture.json and preview.txt. preview.txt is the exact bounded,
-                   sanitized evidence that the next stage will send to Foundry.
-                2. Confirm nothing sensitive or out of scope is present, and that
-                   fingerprint.txt matches the "Approval fingerprint" line in preview.txt.
-                Resume ONLY to approve sending exactly this evidence pack to the configured
-                Foundry project. Reject otherwise. This task approves the pack; it does not
-                provide any way to change it. If anything is wrong, reject and capture again.
-                Rejection or timeout stops the workflow before any model request.
+                Review the "investigation-review" artifact for this run.
+                Open preview.txt and confirm the evidence is relevant and contains no
+                sensitive or out-of-scope content.
+
+                Approve to send that exact evidence pack to the configured Foundry project.
+                Reject if anything should not be sent.
+
+                Artifact integrity is verified automatically before any model request.
 
   - stage: Analyze
     displayName: Verify fingerprint, then run the approved Foundry investigation
