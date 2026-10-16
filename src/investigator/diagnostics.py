@@ -8,10 +8,23 @@ from pydantic import ValidationError
 def failure_details(exc: Exception, stage: str, debug: bool) -> dict:
     details = {"stage": stage, "exception": type(exc).__name__}
     status = getattr(exc, "status_code", None)
+
     if isinstance(status, int):
         details["http_status"] = status
+
     if isinstance(exc, ValidationError):
         details["validation_error_count"] = exc.error_count()
+        details["validation_errors"] = [
+            {
+                "location": ".".join(str(part) for part in error["loc"]),
+                "type": error["type"],
+            }
+            for error in exc.errors(
+                include_url=False,
+                include_input=False,
+            )[:10]
+        ]
+
     if not debug:
         return details
     # OpenAI errors expose body; Azure SDK errors expose a parsed error object.
