@@ -109,14 +109,24 @@ stages:
               notifyUsers: ${{ parameters.approvalReviewers }}
               onTimeout: reject
               instructions: |
-                Review the "investigation-review" artifact for this run.
-                Open preview.txt and confirm the evidence is relevant and contains no
-                sensitive or out-of-scope content.
+                Review the bounded, sanitized evidence in the "investigation-review"
+                artifact published by the Capture stage of this run.
 
-                Approve to send that exact evidence pack to the configured Foundry project.
-                Reject if anything should not be sent.
+                Open this run's artifacts:
+                $(System.CollectionUri)$(System.TeamProject)/_build/results?buildId=$(Build.BuildId)&view=artifacts&type=publishedArtifacts
 
-                Artifact integrity is verified automatically before any model request.
+                In "investigation-review", inspect:
+                - preview.txt: the exact evidence pack that will be sent to Foundry
+                - capture.json: the structured capture and provenance metadata
+
+                Confirm the evidence is relevant and contains no credentials, secrets,
+                personal data, or out-of-scope content.
+
+                Resume to approve sending this exact evidence pack to the configured
+                Foundry project. Reject if anything should not be sent.
+
+                Artifact integrity and the approval fingerprint are verified automatically
+                before any model request.
 
   - stage: Analyze
     displayName: Verify fingerprint, then run the approved Foundry investigation
