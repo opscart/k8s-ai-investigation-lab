@@ -1,0 +1,299 @@
+# Reusable stage template: human-gated investigation of ONE failed Azure DevOps build.
+# Capture -> ManualValidation approval -> Foundry context-pack run -> offline evaluation.
+# Contains no organization, project, repository, model, endpoint or build-specific values;
+# the consumer supplies them as parameters. See examples/azure-devops/investigation-workflow.
+parameters:
+  - name: failedBuildId
+    type: number
+  # Repository resource alias of the PINNED framework checkout, or 'self' for this repository.
+  - name: frameworkRepository
+    type: string
+    default: self
+  # Repo-relative path of the capture policy inside the CONSUMER repository.
+  - name: capturePolicy
+    type: string
+  - name: azureServiceConnection
+    type: string
+  # Variable group holding AZURE_AI_PROJECT_ENDPOINT and AZURE_AI_MODEL_DEPLOYMENT_NAME.
+  - name: foundryVariableGroup
+    type: string
+  - name: approvalReviewers
+    type: string
+  - name: approvalTimeoutMinutes
+    type: number
+    default: 240
+  # Optional repo-relative evaluation case in the CONSUMER repository; blank skips evaluation.
+  - name: evaluationCase
+    type: string
+    default: ''
+
+stages:
+  - stage: Capture
+    displayName: Capture bounded evidence (no model request)
+    variables:
+      - group: ${{ parameters.foundryVariableGroup }}
+      - name: frameworkDir
+        value: $(Pipeline.Workspace)/framework
+      - ${{ if eq(parameters.frameworkRepository, 'self') }}:
+          - name: consumerDir
+            value: $(Pipeline.Workspace)/framework
+      - ${{ if ne(parameters.frameworkRepository, 'self') }}:
+          - name: consumerDir
+            value: $(Pipeline.Workspace)/consumer
+    jobs:
+      - job: capture
+        pool:
+          vmImage: ubuntu-24.04
+        steps:
+          - checkout: ${{ parameters.frameworkRepository }}
+            path: framework
+            persistCredentials: false
+          - ${{ if ne(parameters.frameworkRepository, 'self') }}:
+              - checkout: self
+                path: consumer
+                persistCredentials: false
+          - task: UsePythonVersion@0
+            inputs:
+              versionSpec: '3.12'
+          - bash: |
+              set -euo pipefail
+              python -m pip install --quiet "$(frameworkDir)"
+            displayName: Install investigation CLIs from the framework checkout
+          - bash: |
+              set -euo pipefail
+              case "$CAPTURE_POLICY" in
+                ""|/*|*..*) echo "capturePolicy must be a relative path without '..'." >&2; exit 1 ;;
+              esac
+              mkdir "$(Build.ArtifactStagingDirectory)/review"
+              investigate-ado capture \
+                --build-id ${{ parameters.failedBuildId }} \
+                --policy "$(consumerDir)/$CAPTURE_POLICY" \
+                --output "$(Build.ArtifactStagingDirectory)/review/capture.json"
+            displayName: Capture sanitized evidence (read-only)
+            env:
+              CAPTURE_POLICY: ${{ parameters.capturePolicy }}
+              AZURE_DEVOPS_EXT_PAT: $(System.AccessToken)
+          - bash: |
+              set -euo pipefail
+              review="$(Build.ArtifactStagingDirectory)/review"
+              for name in AZURE_AI_PROJECT_ENDPOINT AZURE_AI_MODEL_DEPLOYMENT_NAME; do
+                value="${!name:-}"
+                if [ -z "$value" ] || [ "${value#\$(}" != "$value" ]; then
+                  echo "Pipeline variable $name is not set." >&2
+                  exit 1
+                fi
+              done
+              # Preview text holds the exact evidence; keep it in the artifact, not the log.
+              investigate preview --mode context-pack --capture "$review/capture.json" \
+                > "$review/preview.txt"
+              python "$(frameworkDir)/templates/azure-devops/scripts/workflow_guard.py" fingerprint \
+                --preview "$review/preview.txt" --output "$review/fingerprint.txt"
+              python "$(frameworkDir)/templates/azure-devops/scripts/workflow_guard.py" manifest \
+                --directory "$review" \
+                --failed-build-id ${{ parameters.failedBuildId }} \
+                --run-id "$(Build.BuildId)" \
+                --output "$review/manifest.json"
+              echo "Approval fingerprint: $(cat "$review/fingerprint.txt")"
+            displayName: Preview, extract fingerprint, write manifest
+            env:
+              AZURE_AI_PROJECT_ENDPOINT: $(AZURE_AI_PROJECT_ENDPOINT)
+              AZURE_AI_MODEL_DEPLOYMENT_NAME: $(AZURE_AI_MODEL_DEPLOYMENT_NAME)
+          - task: PublishPipelineArtifact@1
+            displayName: Publish review artifact
+            inputs:
+              targetPath: $(Build.ArtifactStagingDirectory)/review
+              artifact: investigation-review
+
+  - stage: Approval
+    displayName: Human approval of the bounded sanitized evidence pack
+    dependsOn: Capture
+    jobs:
+      - job: approve
+        displayName: Wait for reviewer
+        pool: server
+        timeoutInMinutes: ${{ parameters.approvalTimeoutMinutes }}
+        steps:
+          - task: ManualValidation@1
+            displayName: Approve or reject the evidence pack
+            timeoutInMinutes: ${{ parameters.approvalTimeoutMinutes }}
+            inputs:
+              notifyUsers: ${{ parameters.approvalReviewers }}
+              onTimeout: reject
+              instructions: |
+                Review the bounded, sanitized evidence in the "investigation-review"
+                artifact published by the Capture stage of this run.
+
+                Open this run's artifacts:
+                $(System.CollectionUri)$(System.TeamProject)/_build/results?buildId=$(Build.BuildId)&view=artifacts&type=publishedArtifacts
+
+                In "investigation-review", inspect:
+                - preview.txt: the exact evidence pack that will be sent to Foundry
+                - capture.json: the structured capture and provenance metadata
+
+                Confirm the evidence is relevant and contains no credentials, secrets,
+                personal data, or out-of-scope content.
+
+                Resume to approve sending this exact evidence pack to the configured
+                Foundry project. Reject if anything should not be sent.
+
+                Artifact integrity and the approval fingerprint are verified automatically
+                before any model request.
+
+  - stage: Analyze
+    displayName: Verify fingerprint, then run the approved Foundry investigation
+    dependsOn: Approval
+    variables:
+      - group: ${{ parameters.foundryVariableGroup }}
+      - name: frameworkDir
+        value: $(Pipeline.Workspace)/framework
+    jobs:
+      - job: analyze
+        pool:
+          vmImage: ubuntu-24.04
+        steps:
+          - checkout: ${{ parameters.frameworkRepository }}
+            path: framework
+            persistCredentials: false
+          - task: UsePythonVersion@0
+            inputs:
+              versionSpec: '3.12'
+          - bash: |
+              set -euo pipefail
+              python -m pip install --quiet "$(frameworkDir)"
+            displayName: Install investigation CLIs from the framework checkout
+          - task: DownloadPipelineArtifact@2
+            displayName: Download the approved review artifact (this run)
+            inputs:
+              buildType: current
+              artifactName: investigation-review
+              targetPath: $(Pipeline.Workspace)/review
+          - bash: |
+              set -euo pipefail
+              for name in AZURE_AI_PROJECT_ENDPOINT AZURE_AI_MODEL_DEPLOYMENT_NAME; do
+                value="${!name:-}"
+                if [ -z "$value" ] || [ "${value#\$(}" != "$value" ]; then
+                  echo "Pipeline variable $name is not set." >&2
+                  exit 1
+                fi
+              done
+              review="$(Pipeline.Workspace)/review"
+              analysis="$(Build.ArtifactStagingDirectory)/analysis"
+              mkdir "$analysis"
+              investigate preview --mode context-pack --capture "$review/capture.json" \
+                > "$analysis/preview-recheck.txt"
+              python "$(frameworkDir)/templates/azure-devops/scripts/workflow_guard.py" verify \
+                --directory "$review" \
+                --failed-build-id ${{ parameters.failedBuildId }} \
+                --run-id "$(Build.BuildId)" \
+                --preview "$analysis/preview-recheck.txt"
+            displayName: Verify fingerprint before any cloud call
+            env:
+              AZURE_AI_PROJECT_ENDPOINT: $(AZURE_AI_PROJECT_ENDPOINT)
+              AZURE_AI_MODEL_DEPLOYMENT_NAME: $(AZURE_AI_MODEL_DEPLOYMENT_NAME)
+          - task: AzureCLI@2
+            displayName: Run approved context-pack investigation (1 model request, 0 tools)
+            inputs:
+              azureSubscription: ${{ parameters.azureServiceConnection }}
+              scriptType: bash
+              scriptLocation: inlineScript
+              inlineScript: |
+                set -euo pipefail
+                review="$(Pipeline.Workspace)/review"
+                investigate run --mode context-pack \
+                  --capture "$review/capture.json" \
+                  --approve "$(tr -d '[:space:]' < "$review/fingerprint.txt")" \
+                  --output "$(Build.ArtifactStagingDirectory)/analysis/result"
+            env:
+              AZURE_AI_PROJECT_ENDPOINT: $(AZURE_AI_PROJECT_ENDPOINT)
+              AZURE_AI_MODEL_DEPLOYMENT_NAME: $(AZURE_AI_MODEL_DEPLOYMENT_NAME)
+          - task: PublishPipelineArtifact@1
+            displayName: Publish investigation results
+            inputs:
+              targetPath: $(Build.ArtifactStagingDirectory)/analysis
+              artifact: investigation-result
+
+  - stage: Evaluate
+    displayName: Evaluate offline (no network, no model)
+    dependsOn: Analyze
+    variables:
+      - name: frameworkDir
+        value: $(Pipeline.Workspace)/framework
+      - ${{ if eq(parameters.frameworkRepository, 'self') }}:
+          - name: consumerDir
+            value: $(Pipeline.Workspace)/framework
+      - ${{ if ne(parameters.frameworkRepository, 'self') }}:
+          - name: consumerDir
+            value: $(Pipeline.Workspace)/consumer
+    jobs:
+      - job: evaluate
+        pool:
+          vmImage: ubuntu-24.04
+        steps:
+          - ${{ if eq(parameters.evaluationCase, '') }}:
+              - bash: |
+                  echo "Evaluation skipped: no evaluationCase was supplied. Nothing failed."
+                displayName: Skip evaluation (no evaluationCase)
+          - ${{ if ne(parameters.evaluationCase, '') }}:
+              - checkout: ${{ parameters.frameworkRepository }}
+                path: framework
+                persistCredentials: false
+              - ${{ if ne(parameters.frameworkRepository, 'self') }}:
+                  - checkout: self
+                    path: consumer
+                    persistCredentials: false
+              - task: UsePythonVersion@0
+                inputs:
+                  versionSpec: '3.12'
+              - bash: |
+                  set -euo pipefail
+                  python -m pip install --quiet "$(frameworkDir)"
+                displayName: Install investigation CLIs from the framework checkout
+              - task: DownloadPipelineArtifact@2
+                displayName: Download review artifact (this run)
+                inputs:
+                  buildType: current
+                  artifactName: investigation-review
+                  targetPath: $(Pipeline.Workspace)/review
+              - task: DownloadPipelineArtifact@2
+                displayName: Download result artifact (this run)
+                inputs:
+                  buildType: current
+                  artifactName: investigation-result
+                  targetPath: $(Pipeline.Workspace)/result
+              - bash: |
+                  set -euo pipefail
+                  case "$EVALUATION_CASE" in
+                    ""|/*|*..*) echo "evaluationCase must be a relative path without '..'." >&2; exit 1 ;;
+                  esac
+                  fingerprint="$(tr -d '[:space:]' < "$(Pipeline.Workspace)/review/fingerprint.txt")"
+                  out="$(Build.ArtifactStagingDirectory)/evaluation"
+                  mkdir "$out"
+                  set +e
+                  investigate-eval evaluate \
+                    --case "$(consumerDir)/$EVALUATION_CASE" \
+                    --capture "$(Pipeline.Workspace)/review/capture.json" \
+                    --result "$(Pipeline.Workspace)/result/result/context-pack-${fingerprint:0:12}.json" \
+                    --output "$out"
+                  code=$?
+                  set -e
+                  echo "##vso[task.setvariable variable=evalExit]$code"
+                  case "$code" in
+                    0) echo "Evaluation passed (a recorded human review was required for this)." ;;
+                    3) echo "EXPECTED: deterministic gates passed; semantic correctness is pending human review. This is not a failed diagnosis." ;;
+                    1) echo "A deterministic evaluation gate failed; see evaluation.md in the artifact." ;;
+                    *) echo "Evaluation input error; no report was written." ;;
+                  esac
+                displayName: Evaluate saved capture and result
+                env:
+                  EVALUATION_CASE: ${{ parameters.evaluationCase }}
+              - task: PublishPipelineArtifact@1
+                displayName: Publish evaluation reports
+                condition: and(succeeded(), in(variables['evalExit'], '0', '1', '3'))
+                inputs:
+                  targetPath: $(Build.ArtifactStagingDirectory)/evaluation
+                  artifact: investigation-evaluation
+              - bash: |
+                  echo "Evaluation did not produce a usable result (exit $(evalExit))." >&2
+                  exit 1
+                displayName: Fail on gate failure or input error
+                condition: and(succeeded(), in(variables['evalExit'], '1', '2'))

@@ -1,5 +1,6 @@
-"""Offline checks of the example Azure Pipelines workflow; no Azure DevOps or Foundry access."""
+"""Offline checks of the reusable Azure Pipelines template; no Azure DevOps or Foundry access."""
 
+import copy
 import importlib.util
 import json
 import re
@@ -13,139 +14,288 @@ from investigator.azure_devops import capture_build
 from investigator.cli import main as investigate
 
 ROOT = Path(__file__).parents[1]
+TEMPLATE = ROOT / "templates/azure-devops/investigate-failed-build.yml"
 WORKFLOW = ROOT / "examples/azure-devops/investigation-workflow"
-PIPELINE = WORKFLOW / "azure-pipelines.yml"
-TEXT = PIPELINE.read_text()
+WRAPPER = WORKFLOW / "azure-pipelines.yml"
+CONSUMER = WORKFLOW / "consumer-example.yml"
+TEXT = TEMPLATE.read_text()
 SPEC = importlib.util.spec_from_file_location(
-    "workflow_guard", WORKFLOW / "scripts/workflow_guard.py"
+    "workflow_guard", ROOT / "templates/azure-devops/scripts/workflow_guard.py"
 )
 guard = importlib.util.module_from_spec(SPEC)
-# Keep bytecode out of examples/, which other tests scan as text.
+# Keep bytecode out of the repository tree.
 sys.dont_write_bytecode = True
 SPEC.loader.exec_module(guard)
 
 FP = "a" * 64
+CONDITION = re.compile(r"\$\{\{ if (eq|ne)\(parameters\.(\w+), '([^']*)'\) \}\}")
+PARAMETER = re.compile(r"\$\{\{ parameters\.(\w+) \}\}")
+DEFAULTS = {
+    "failedBuildId": 1234,
+    "frameworkRepository": "self",
+    "capturePolicy": "policy/capture.json",
+    "azureServiceConnection": "SERVICE-CONNECTION",
+    "foundryVariableGroup": "FOUNDRY-GROUP",
+    "approvalReviewers": "reviewer@example.invalid",
+    "approvalTimeoutMinutes": 60,
+    "evaluationCase": "",
+}
 
 
-@pytest.fixture(scope="module")
-def pipeline():
-    return yaml.safe_load(TEXT)
+def expand(node, values):
+    """Resolve the small compile-time grammar the template uses (if eq/ne, parameters.X)."""
+
+    if isinstance(node, list):
+        result = []
+        for item in node:
+            if isinstance(item, dict) and len(item) == 1:
+                ((key, body),) = item.items()
+                match = CONDITION.fullmatch(key) if isinstance(key, str) else None
+                if match:
+                    op, name, literal = match.groups()
+                    if (str(values[name]) == literal) == (op == "eq"):
+                        result.extend(expand(body, values))
+                    continue
+            result.append(expand(item, values))
+        return result
+    if isinstance(node, dict):
+        return {key: expand(value, values) for key, value in node.items()}
+    if isinstance(node, str):
+        whole = PARAMETER.fullmatch(node)
+        if whole:
+            return values[whole.group(1)]
+        return PARAMETER.sub(lambda m: str(values[m.group(1)]), node)
+    return node
 
 
-def stage(pipeline, name):
-    return next(item for item in pipeline["stages"] if item["stage"] == name)
+def render(**overrides):
+    values = {**DEFAULTS, **overrides}
+    document = yaml.safe_load(TEXT)
+    return copy.deepcopy(expand(document["stages"], values))
 
 
-def steps(pipeline, name):
-    return stage(pipeline, name)["jobs"][0]["steps"]
+def stage(stages, name):
+    return next(item for item in stages if item["stage"] == name)
 
 
-def step_text(pipeline, name):
-    return yaml.safe_dump(stage(pipeline, name))
+def steps(stages, name):
+    return stage(stages, name)["jobs"][0]["steps"]
 
 
-def test_manual_only_with_required_parameters(pipeline):
-    assert pipeline["trigger"] == "none" and pipeline["pr"] == "none"
-    params = {item["name"]: item for item in pipeline["parameters"]}
-    for required in ("failedBuildId", "azureServiceConnection", "approvalReviewers"):
-        assert "default" not in params[required]
+def dump(stages, name=None):
+    return yaml.safe_dump(stage(stages, name) if name else stages)
+
+
+@pytest.fixture
+def stages():
+    return render()
+
+
+def test_template_contains_no_service_or_build_specific_values():
+    lowered = TEXT.lower()
+    for forbidden in (
+        "679",
+        "pipeline-app-demo",
+        "pipeline-shared-library",
+        "billing",
+        "dev.azure.com",
+        "opscartinc",
+        "ai-devops-poc",
+        "k8s-ai-investigation-foundry",
+        "azure-devops-build.example",
+        "evals/matrix",
+        "services.ai.azure.com",
+        "gpt-",
+    ):
+        assert forbidden not in lowered
+
+
+def test_template_is_a_parameterized_stage_template_with_no_triggers():
+    document = yaml.safe_load(TEXT)
+    assert set(document) == {"parameters", "stages"}
+    params = {item["name"]: item for item in document["parameters"]}
+    assert set(params) == set(DEFAULTS)
+    required = {"failedBuildId", "capturePolicy", "azureServiceConnection"}
+    required |= {"foundryVariableGroup", "approvalReviewers"}
+    assert {name for name, item in params.items() if "default" not in item} == required
+    assert params["frameworkRepository"]["default"] == "self"
+    assert params["evaluationCase"]["default"] == ""
     assert params["failedBuildId"]["type"] == "number"
-    assert "resources" not in pipeline
 
 
-def test_stages_run_in_order_without_overriding_conditions(pipeline):
-    names = [item["stage"] for item in pipeline["stages"]]
-    assert names == ["Capture", "Approval", "Analyze", "Evaluate"]
-    assert [item.get("dependsOn") for item in pipeline["stages"]] == [
-        None,
-        "Capture",
-        "Approval",
-        "Analyze",
-    ]
-    for item in pipeline["stages"]:
+def test_stages_run_in_order_without_overriding_conditions(stages):
+    assert [item["stage"] for item in stages] == ["Capture", "Approval", "Analyze", "Evaluate"]
+    assert [item.get("dependsOn") for item in stages] == [None, "Capture", "Approval", "Analyze"]
+    for item in stages:
         assert "condition" not in item
-    analyze = step_text(pipeline, "Analyze")
+    analyze = dump(stages, "Analyze")
     assert "condition" not in analyze and "continueOnError" not in analyze
 
 
-def test_model_and_cloud_access_is_confined_to_analyze(pipeline):
+def test_self_framework_checks_out_only_the_repository_itself():
+    stages = render(frameworkRepository="self")
+    for name in ("Capture", "Analyze"):
+        checkouts = [s for s in steps(stages, name) if "checkout" in s]
+        assert [(s["checkout"], s["path"]) for s in checkouts] == [("self", "framework")]
+    capture_vars = {
+        v["name"]: v["value"] for v in stage(stages, "Capture")["variables"] if "name" in v
+    }
+    assert capture_vars["consumerDir"] == capture_vars["frameworkDir"]
+
+
+def test_external_framework_checkout_is_explicit_and_separate_from_consumer():
+    stages = render(frameworkRepository="framework")
+    capture = [s for s in steps(stages, "Capture") if "checkout" in s]
+    assert [(s["checkout"], s["path"]) for s in capture] == [
+        ("framework", "framework"),
+        ("self", "consumer"),
+    ]
+    # Analyze needs only the framework: the consumer repository is not checked out.
+    analyze = [s for s in steps(stages, "Analyze") if "checkout" in s]
+    assert [(s["checkout"], s["path"]) for s in analyze] == [("framework", "framework")]
+    capture_vars = {
+        v["name"]: v["value"] for v in stage(stages, "Capture")["variables"] if "name" in v
+    }
+    assert capture_vars["consumerDir"] != capture_vars["frameworkDir"]
+    assert "frameworkRepository" not in dump(stages)
+
+
+@pytest.mark.parametrize("framework", ["self", "framework"])
+def test_installs_only_from_the_framework_checkout_and_never_persists_credentials(framework):
+    stages = render(frameworkRepository=framework, evaluationCase="case.json")
+    installs = [
+        s["bash"]
+        for item in stages
+        for job in item["jobs"]
+        for s in job["steps"]
+        if "pip install" in s.get("bash", "")
+    ]
+    assert len(installs) == 3
+    for install in installs:
+        assert 'pip install --quiet "$(frameworkDir)"' in install
+    checkouts = [
+        s for item in stages for job in item["jobs"] for s in job["steps"] if "checkout" in s
+    ]
+    assert checkouts and all(s["persistCredentials"] is False for s in checkouts)
+    assert all("fetchDepth" not in s for s in checkouts)
+
+
+def test_capture_policy_is_a_validated_parameter_not_hardcoded():
+    stages = render(capturePolicy="my/policy.json")
+    capture = next(
+        s for s in steps(stages, "Capture") if "investigate-ado capture" in s.get("bash", "")
+    )
+    assert capture["env"]["CAPTURE_POLICY"] == "my/policy.json"
+    assert '--policy "$(consumerDir)/$CAPTURE_POLICY"' in capture["bash"]
+    assert '""|/*|*..*)' in capture["bash"]
+    assert "config/" not in TEXT
+
+
+def test_variable_group_and_service_connection_are_parameters_confined_to_their_stages():
+    stages = render(foundryVariableGroup="GROUP-X", azureServiceConnection="CONN-X")
+    for name in ("Capture", "Analyze"):
+        assert {"group": "GROUP-X"} in stage(stages, name)["variables"]
+    for name in ("Approval", "Evaluate"):
+        assert "GROUP-X" not in dump(stages, name)
+    assert "CONN-X" not in dump(stages, "Capture") + dump(stages, "Approval")
+    assert "CONN-X" not in dump(render(evaluationCase="c.json"), "Evaluate")
+    runs = [s for s in steps(stages, "Analyze") if s.get("task") == "AzureCLI@2"]
+    assert [s["inputs"]["azureSubscription"] for s in runs] == ["CONN-X"]
+    assert TEXT.count("AzureCLI@2") == 1 and TEXT.count("azureSubscription") == 1
+
+
+def test_model_access_is_confined_to_one_azure_cli_step(stages):
+    assert TEXT.count("investigate run") == 1
     for name in ("Capture", "Approval", "Evaluate"):
-        text = step_text(pipeline, name)
-        assert "investigate run" not in text and "AzureCLI@2" not in text
-        assert "azureSubscription" not in text
-    assert step_text(pipeline, "Analyze").count("investigate run --mode context-pack") == 1
-    assert TEXT.count("AzureCLI@2") == 1 and TEXT.count("investigate run") == 1
-    kinds = [item.get("task") or "bash" for item in steps(pipeline, "Analyze")]
-    assert kinds.index("AzureCLI@2") == len(kinds) - 2
+        assert "investigate run" not in dump(stages, name)
+    assert "--mode context-pack" in TEXT and "--mode agent" not in TEXT
+    assert "--mode baseline" not in TEXT
 
 
-def test_capture_uses_existing_clis_and_publishes_review_artifact(pipeline):
-    text = step_text(pipeline, "Capture")
-    for command in (
-        "investigate-ado capture",
-        "investigate preview --mode context-pack",
-        "fingerprint",
-        "manifest",
-    ):
+def test_access_token_is_mapped_only_to_the_capture_step(stages):
+    assert TEXT.count("System.AccessToken") == 1
+    holders = [s for s in steps(stages, "Capture") if "AZURE_DEVOPS_EXT_PAT" in s.get("env", {})]
+    assert len(holders) == 1
+    assert holders[0]["env"]["AZURE_DEVOPS_EXT_PAT"] == "$(System.AccessToken)"
+    assert "investigate-ado capture" in holders[0]["bash"]
+    assert TEXT.count("AZURE_DEVOPS_EXT_PAT") == 1
+
+
+def test_capture_publishes_review_artifact_and_makes_no_model_request(stages):
+    text = dump(stages, "Capture")
+    for command in ("investigate-ado capture", "investigate preview --mode context-pack"):
         assert command in text
+    for name in ("fingerprint", "manifest"):
+        assert f'workflow_guard.py" {name}' in TEXT
     published = [
-        s for s in steps(pipeline, "Capture") if s.get("task") == "PublishPipelineArtifact@1"
+        s for s in steps(stages, "Capture") if s.get("task") == "PublishPipelineArtifact@1"
     ]
     assert [s["inputs"]["artifact"] for s in published] == ["investigation-review"]
-    assert "config/azure-devops-build.example.json" in TEXT
-    assert (ROOT / "config/azure-devops-build.example.json").is_file()
+    assert "AZURE_AI" in text and "azureSubscription" not in text
 
 
-def test_access_token_is_mapped_only_to_the_capture_step(pipeline):
-    assert TEXT.count("System.AccessToken") == 1
-    holders = [s for s in steps(pipeline, "Capture") if "AZURE_DEVOPS_EXT_PAT" in s.get("env", {})]
-    assert len(holders) == 1
-    assert holders[0]["env"] == {"AZURE_DEVOPS_EXT_PAT": "$(System.AccessToken)"}
-    assert "investigate-ado capture" in holders[0]["bash"]
-    assert "AZURE_DEVOPS_EXT_PAT" not in TEXT.replace("AZURE_DEVOPS_EXT_PAT: $(System", "")
-
-
-def test_approval_is_agentless_manual_validation_that_rejects_on_timeout(pipeline):
-    job = stage(pipeline, "Approval")["jobs"][0]
+def test_approval_is_agentless_and_links_to_this_runs_review_artifact(stages):
+    job = stage(stages, "Approval")["jobs"][0]
     assert job["pool"] == "server"
     (task,) = job["steps"]
     assert task["task"] == "ManualValidation@1"
     assert task["inputs"]["onTimeout"] == "reject"
-    instructions = task["inputs"]["instructions"].lower()
-    for required in ("capture.json", "preview.txt", "this run", "reject", "sanitized"):
+    instructions = task["inputs"]["instructions"]
+    assert (
+        "$(System.CollectionUri)$(System.TeamProject)/_build/results"
+        "?buildId=$(Build.BuildId)&view=artifacts&type=publishedArtifacts"
+    ) in instructions
+    published = [
+        s["inputs"]["artifact"]
+        for s in steps(stages, "Capture")
+        if s.get("task") == "PublishPipelineArtifact@1"
+    ]
+    for required in ("preview.txt", "capture.json", "sanitized", "Reject"):
         assert required in instructions
-    assert "edit" not in instructions.replace("does not provide any way to change", "")
+    assert f'"{published[0]}"' in instructions
+    assert "editable" not in instructions.lower()
+    assert task["inputs"]["notifyUsers"] == DEFAULTS["approvalReviewers"]
 
 
-def test_analyze_consumes_the_artifact_capture_published_and_verifies_first(pipeline):
+def test_analyze_consumes_capture_artifact_and_verifies_before_the_model_request(stages):
     published = {
         s["inputs"]["artifact"]
-        for s in steps(pipeline, "Capture")
+        for s in steps(stages, "Capture")
         if s.get("task") == "PublishPipelineArtifact@1"
     }
-    items = steps(pipeline, "Analyze")
-    downloads = [s for s in items if s.get("task") == "DownloadPipelineArtifact@2"]
-    assert [s["inputs"]["artifactName"] for s in downloads] == ["investigation-review"]
-    assert downloads[0]["inputs"]["buildType"] == "current"
-    assert downloads[0]["inputs"]["artifactName"] in published
-    positions = {s.get("displayName"): i for i, s in enumerate(items)}
-    verify = positions["Verify fingerprint before any cloud call"]
-    assert positions["Download the approved review artifact (this run)"] < verify
-    assert verify < next(i for i, s in enumerate(items) if s.get("task") == "AzureCLI@2")
+    items = steps(stages, "Analyze")
+    downloads = [i for i, s in enumerate(items) if s.get("task") == "DownloadPipelineArtifact@2"]
+    verify = next(
+        i for i, s in enumerate(items) if 'workflow_guard.py" verify' in s.get("bash", "")
+    )
+    run = next(i for i, s in enumerate(items) if s.get("task") == "AzureCLI@2")
+    assert [items[i]["inputs"]["artifactName"] for i in downloads] == ["investigation-review"]
+    assert items[downloads[0]]["inputs"]["buildType"] == "current"
+    assert items[downloads[0]]["inputs"]["artifactName"] in published
+    assert downloads[0] < verify < run
     verify_text = items[verify]["bash"]
     assert "investigate preview --mode context-pack" in verify_text
-    assert 'workflow_guard.py" verify' in verify_text and "--run-id" in verify_text
-    run = next(s for s in items if s.get("task") == "AzureCLI@2")["inputs"]
-    assert run["azureSubscription"] == "${{ parameters.azureServiceConnection }}"
-    assert "--approve" in run["inlineScript"] and "fingerprint.txt" in run["inlineScript"]
+    assert "--run-id" in verify_text and "--failed-build-id 1234" in verify_text
+    script = items[run]["inputs"]["inlineScript"]
+    assert "--approve" in script and "fingerprint.txt" in script
+    assert "set -euo pipefail" in verify_text and "set -euo pipefail" in script
 
 
-def test_outputs_use_fresh_directories_and_nothing_is_written_to_git(pipeline):
+def test_outputs_use_fresh_directories_and_nothing_is_written_to_git():
     assert "mkdir -p" not in TEXT and TEXT.count('mkdir "') == 3
-    for forbidden in ("git push", "git commit", "git add", "az pipelines", "az devops", "kubectl"):
+    for forbidden in (
+        "git push",
+        "git commit",
+        "git add",
+        "git checkout",
+        "az pipelines",
+        "az devops",
+        "kubectl",
+        "remediat",
+    ):
         assert forbidden not in TEXT
-    assert TEXT.count("persistCredentials: false") == TEXT.count("checkout: self") == 3
-    assert "repositories:" not in TEXT
+    for forbidden in ("trigger:", "pr:", "resources:", "schedules:"):
+        assert forbidden not in TEXT
 
 
 def test_logs_do_not_expose_secrets_or_provider_details():
@@ -156,37 +306,101 @@ def test_logs_do_not_expose_secrets_or_provider_details():
             assert "AccessToken" not in line and "AZURE_DEVOPS_EXT_PAT" not in line
 
 
-def test_evaluation_treats_exit_3_as_expected_and_never_supplies_a_review(pipeline):
-    text = step_text(pipeline, "Evaluate")
+def test_evaluation_is_optional_and_skips_successfully_when_blank():
+    blank = steps(render(evaluationCase=""), "Evaluate")
+    assert len(blank) == 1 and "skipped" in blank[0]["bash"].lower()
+    assert "investigate-eval" not in yaml.safe_dump(blank) and "task" not in blank[0]
+    supplied = steps(render(evaluationCase="eval/case.json"), "Evaluate")
+    text = yaml.safe_dump(supplied)
+    assert "investigate-eval evaluate" in text
+    evaluate = next(s for s in supplied if "investigate-eval" in s.get("bash", ""))
+    assert evaluate["env"] == {"EVALUATION_CASE": "eval/case.json"}
+    assert '--case "$(consumerDir)/$EVALUATION_CASE"' in evaluate["bash"]
+    assert '""|/*|*..*)' in evaluate["bash"]
     assert "--review" not in TEXT
+
+
+def test_evaluation_treats_exit_3_as_expected_and_publishes_reports():
+    supplied = steps(render(evaluationCase="eval/case.json"), "Evaluate")
+    text = yaml.safe_dump(supplied)
     assert "EXPECTED" in text and "not a failed diagnosis" in text
-    assert "evals/matrix/azure-devops-build-679.json" in text
-    assert (ROOT / "evals/matrix/azure-devops-build-679.json").is_file()
-    publish = next(
-        s for s in steps(pipeline, "Evaluate") if s.get("task") == "PublishPipelineArtifact@1"
-    )
-    assert (
-        "'3'" in publish["condition"]
-        and publish["inputs"]["artifact"] == "investigation-evaluation"
-    )
-    gate = steps(pipeline, "Evaluate")[-1]
+    publish = next(s for s in supplied if s.get("task") == "PublishPipelineArtifact@1")
+    assert "'3'" in publish["condition"]
+    assert publish["inputs"]["artifact"] == "investigation-evaluation"
+    gate = supplied[-1]
     assert "'1', '2'" in gate["condition"] and "'3'" not in gate["condition"]
     assert re.search(r"context-pack-\$\{fingerprint:0:12\}\.json", text)
+    downloads = [
+        s["inputs"]["artifactName"] for s in supplied if "task" in s and "Download" in s["task"]
+    ]
+    assert downloads == ["investigation-review", "investigation-result"]
 
 
-def test_documentation_lists_setup_and_warnings():
+def supplied_parameters(path):
+    document = yaml.safe_load(path.read_text())
+    (invocation,) = [s for s in document["stages"] if "template" in s]
+    return document, invocation
+
+
+def test_thin_wrapper_invokes_the_template_with_self_framework():
+    document, invocation = supplied_parameters(WRAPPER)
+    text = WRAPPER.read_text()
+    assert invocation["template"] == "/templates/azure-devops/investigate-failed-build.yml"
+    assert 30 <= len(text.splitlines()) <= 80
+    assert len(document["stages"]) == 1
+    for forbidden in ("bash:", "task:", "checkout", "script:", "pool:"):
+        assert forbidden not in text
+    assert document["trigger"] == "none" and document["pr"] == "none"
+    params = invocation["parameters"]
+    assert params["frameworkRepository"] == "self"
+    assert (ROOT / params["capturePolicy"]).is_file()
+    assert params["foundryVariableGroup"] == "k8s-ai-investigation-foundry"
+    template_names = {item["name"] for item in yaml.safe_load(TEXT)["parameters"]}
+    assert set(params) == template_names
+    # Build 679 appears nowhere in the wrapper; evaluation is opt-in at queue time.
+    assert "679" not in text
+    declared = {item["name"]: item for item in document["parameters"]}
+    assert declared["evaluationCase"]["default"] == ""
+
+
+def test_consumer_example_pins_the_framework_and_owns_its_policy():
+    document, invocation = supplied_parameters(CONSUMER)
+    (repository,) = document["resources"]["repositories"]
+    assert re.fullmatch(r"refs/tags/\S+|[0-9a-f]{40}", repository["ref"])
+    configured = yaml.safe_dump(document)
+    assert "refs/heads" not in configured and not re.search(r"\bmain\b", configured)
+    alias = repository["repository"]
+    assert invocation["template"] == f"templates/azure-devops/investigate-failed-build.yml@{alias}"
+    assert invocation["parameters"]["frameworkRepository"] == alias
+    assert not invocation["parameters"]["capturePolicy"].startswith("config/")
+    template_names = {item["name"] for item in yaml.safe_load(TEXT)["parameters"]}
+    assert set(invocation["parameters"]) <= template_names
+    required = {"failedBuildId", "capturePolicy", "azureServiceConnection"}
+    required |= {"foundryVariableGroup", "approvalReviewers"}
+    assert required <= set(invocation["parameters"])
+    assert document["trigger"] == "none" and document["pr"] == "none"
+
+
+def test_documentation_lists_responsibilities_prerequisites_and_limits():
     docs = (WORKFLOW / "README.md").read_text().lower()
     for topic in (
+        "framework repository",
+        "consumer repository",
+        "refs/tags",
+        "capture policy",
+        "variable group",
         "service connection",
         "system.accesstoken",
         "azure_ai_project_endpoint",
-        "azure_ai_model_deployment_name",
         "failedbuildid",
         "retention",
         "manualvalidation",
         "production deployment",
+        "limitations",
     ):
         assert topic in docs
+    architecture = (ROOT / "docs/architecture.md").read_text()
+    assert "templates/azure-devops/investigate-failed-build.yml" in architecture
 
 
 # --- workflow_guard ---------------------------------------------------------------
