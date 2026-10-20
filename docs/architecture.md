@@ -98,14 +98,21 @@ destination and retention policy. Cloud conversations are cleaned up on normal e
 interrupts, network failures or process death can leave resources. Project monitoring
 and billing records have their own retention. .gitignore is not a data-loss-prevention system.
 
-## Pipeline orchestration (example)
+## Pipeline orchestration (reusable template)
 
-The example workflow in `examples/azure-devops/investigation-workflow/` adds no new engine.
+`templates/azure-devops/investigate-failed-build.yml` adds no new engine. A consuming
+repository supplies a thin wrapper, a pinned framework repository reference, its own capture
+policy, a Foundry variable group and an Azure service connection; the template holds no
+service-specific values. The framework is checked out explicitly and installed from that
+checkout only.
+
 Stage 1 runs `investigate-ado capture` and `investigate preview` and publishes the capture,
 preview, fingerprint and a SHA-256 manifest as a run-scoped artifact; a `ManualValidation`
-gate approves that bounded sanitized pack; stage 3 downloads the same artifact, recomputes the
-preview fingerprint, and only on an exact match runs `investigate run` under an Azure service
-connection. Evaluation then runs offline. Model access exists only in the Analyze stage.
+gate, linked to that run's artifacts, approves the bounded sanitized pack; stage 3 downloads
+the same artifact, recomputes the preview fingerprint, and only on an exact match runs
+`investigate run` under the service connection. Evaluation runs offline and only when the
+consumer supplies a case. `System.AccessToken` is confined to capture and the service
+connection to Analyze. See `examples/azure-devops/investigation-workflow/README.md`.
 
 ## Future OpsCart adapter
 

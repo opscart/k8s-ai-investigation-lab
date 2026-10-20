@@ -191,8 +191,9 @@ claim gates without any model call; semantic correctness stays with a human revi
 
 An example Azure Pipelines workflow chains capture, a `ManualValidation` approval, the
 approved Foundry run and offline evaluation for one manually supplied failed build, reusing
-the commands above. It is a POC, not a production deployment; setup, permissions and privacy
-notes are in
+the commands above. It is delivered as a reusable stage template
+(`templates/azure-devops/investigate-failed-build.yml`) that consumers pin by tag or commit.
+It is a POC, not a production deployment; setup, permissions and privacy notes are in
 [examples/azure-devops/investigation-workflow](examples/azure-devops/investigation-workflow/README.md).
 
 ## Azure DevOps cross-repository experiment

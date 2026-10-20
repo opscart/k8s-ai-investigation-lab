@@ -1,0 +1,35 @@
+# Example for a CONSUMING repository: a small wrapper plus a PINNED framework reference.
+# Copy to the consumer repository and replace every PLACEHOLDER. The capture policy and any
+# evaluation case live in THIS (consumer) repository, not in the framework.
+name: investigate-build-$(Date:yyyyMMdd)$(Rev:.r)
+
+trigger: none
+pr: none
+
+parameters:
+  - name: failedBuildId
+    type: number
+  - name: azureServiceConnection
+    type: string
+  - name: approvalReviewers
+    type: string
+
+resources:
+  repositories:
+    - repository: framework
+      type: github # or: git (Azure Repos, then name is PROJECT/REPO and no endpoint)
+      endpoint: PLACEHOLDER-github-service-connection
+      name: opscart/k8s-ai-investigation-lab
+      # Pin to a protected release tag or an immutable commit. Never refs/heads/main.
+      ref: refs/tags/PLACEHOLDER-v0.1.0
+
+stages:
+  - template: templates/azure-devops/investigate-failed-build.yml@framework
+    parameters:
+      failedBuildId: ${{ parameters.failedBuildId }}
+      frameworkRepository: framework # same alias as the repository resource above
+      capturePolicy: investigation/capture-policy.json
+      azureServiceConnection: ${{ parameters.azureServiceConnection }}
+      foundryVariableGroup: PLACEHOLDER-foundry-variable-group
+      approvalReviewers: ${{ parameters.approvalReviewers }}
+      evaluationCase: '' # optional: investigation/eval-case.json
