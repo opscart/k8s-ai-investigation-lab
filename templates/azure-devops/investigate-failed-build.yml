@@ -9,6 +9,11 @@ parameters:
   - name: frameworkRepository
     type: string
     default: self
+  # Additional Azure Repos repository aliases that must be explicitly
+  # referenced in the Capture job so System.AccessToken can read them.
+  - name: authorizedRepositories
+    type: object
+    default: []
   # Repo-relative path of the capture policy inside the CONSUMER repository.
   - name: capturePolicy
     type: string
@@ -48,9 +53,15 @@ stages:
           - checkout: ${{ parameters.frameworkRepository }}
             path: framework
             persistCredentials: false
+
           - ${{ if ne(parameters.frameworkRepository, 'self') }}:
               - checkout: self
                 path: consumer
+                persistCredentials: false
+
+          - ${{ each repo in parameters.authorizedRepositories }}:
+              - checkout: ${{ repo }}
+                path: authorized/${{ repo }}
                 persistCredentials: false
           - task: UsePythonVersion@0
             inputs:
