@@ -7,9 +7,7 @@ MAX_ANCHORS = 60
 _LIBRARY = r"(?:java|javax|jdk|sun|org\.junit|org\.apache|org\.opentest4j)\."
 _LIBRARY_FRAME = re.compile(rf"\bat\s+(?:java\.base/)?{_LIBRARY}")
 _SOURCE_REF = re.compile(
-    r"((?:[A-Za-z]:)?(?:[/\\]?[\w.-]+)*[/\\][\w.-]+"
-    r"\.(?:java|kt|scala|groovy|py|go|js|ts|cs|rb)"
-    r"|[\w.-]+\.(?:java|kt|scala|groovy|py|go|js|ts|cs|rb))"
+    r"([^\s:]+\.(?:java|kt|scala|groovy|py|go|js|ts|cs|rb))"
     r":(?:\[(\d+)(?:,\d+)?\]|(\d+))"
 )
 # The lookbehind stops a match from starting mid-name (e.g. at "lang." in "java.lang.X").
