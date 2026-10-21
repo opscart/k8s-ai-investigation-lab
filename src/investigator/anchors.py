@@ -7,7 +7,10 @@ MAX_ANCHORS = 60
 _LIBRARY = r"(?:java|javax|jdk|sun|org\.junit|org\.apache|org\.opentest4j)\."
 _LIBRARY_FRAME = re.compile(rf"\bat\s+(?:java\.base/)?{_LIBRARY}")
 _SOURCE_REF = re.compile(
-    r"(?<![\w./\\-])((?:[\w.-]+[/\\])*[\w-]+\.(?:java|kt|scala|groovy|py|go|js|ts|cs|rb)):(\d+)"
+    r"((?:[A-Za-z]:)?(?:[/\\]?[\w.-]+)*[/\\][\w.-]+"
+    r"\.(?:java|kt|scala|groovy|py|go|js|ts|cs|rb)"
+    r"|[\w.-]+\.(?:java|kt|scala|groovy|py|go|js|ts|cs|rb))"
+    r":(?:\[(\d+)(?:,\d+)?\]|(\d+))"
 )
 # The lookbehind stops a match from starting mid-name (e.g. at "lang." in "java.lang.X").
 _CLASS = re.compile(rf"(?<![\w.$])((?:(?!{_LIBRARY})[a-z_]\w*\.)+[A-Z][\w]*)")
@@ -38,19 +41,48 @@ def log_anchors(log_text: str) -> list[Anchor]:
     for text in log_text.splitlines():
         if _LIBRARY_FRAME.search(text):
             continue
+
         for match in _SOURCE_REF.finditer(text):
-            add("source_location", match.group(1).replace("\\", "/"), int(match.group(2)))
+            path = match.group(1).replace("\\", "/")
+            line = int(match.group(2) or match.group(3))
+
+            add(
+                "source_location",
+                path,
+                line,
+            )
+
         for match in _CLASS.finditer(text):
             name = match.group(1).split("$")[0]
-            kind = "test_name" if _TEST_SUFFIX.search(name.rsplit(".", 1)[1]) else "class_name"
+            kind = (
+                "test_name"
+                if _TEST_SUFFIX.search(name.rsplit(".", 1)[1])
+                else "class_name"
+            )
             add(kind, name)
+
         for match in _MAVEN_GOAL.finditer(text):
-            add("build_goal", f"{match.group(1)}:{match.group(2)}")
+            add(
+                "build_goal",
+                f"{match.group(1)}:{match.group(2)}",
+            )
+
         for match in _GRADLE_TASK.finditer(text):
-            add("build_goal", f"gradle:{match.group(1)}")
+            add(
+                "build_goal",
+                f"gradle:{match.group(1)}",
+            )
+
         for match in _SYSTEM_PROPERTY.finditer(text):
-            add("property_name", match.group(1))
-    return sorted(found.values(), key=lambda a: (a.kind, a.value, a.line or 0))[:MAX_ANCHORS]
+            add(
+                "property_name",
+                match.group(1),
+            )
+
+    return sorted(
+        found.values(),
+        key=lambda a: (a.kind, a.value, a.line or 0),
+    )[:MAX_ANCHORS]
 
 
 def pipeline_anchors(text: str, template_paths: list[str]) -> list[Anchor]:
