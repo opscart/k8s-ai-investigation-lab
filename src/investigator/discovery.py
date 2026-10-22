@@ -119,7 +119,11 @@ def _score(candidates, anchors: list[Anchor], pipeline) -> tuple[dict, set[str]]
     for anchor in anchors:
         if anchor.kind == "source_location":
             for key in sources:
-                if key[1] == anchor.value or key[1].endswith("/" + anchor.value):
+                if (
+                    key[1] == anchor.value
+                    or key[1].endswith("/" + anchor.value)
+                    or anchor.value.endswith("/" + key[1])
+                ):
                     hit(key, "source_location", anchor)
         elif anchor.kind in {"class_name", "test_name"}:
             tail = anchor.value.replace(".", "/")
